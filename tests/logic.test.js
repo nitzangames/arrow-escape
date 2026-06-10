@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { balance } from '../src/balance.js';
 import { allocGameData } from '../src/gameData.js';
 import { EMPTY } from '../src/generator.js';
-// Task 6 extends this import with awardClear, nextLevel, useHint, refillHearts.
-// Importing them now would crash Node (missing exports), so don't.
-import { startLevel, tapCell, tick, distToEdge } from '../src/logic.js';
+import {
+  startLevel, tapCell, tick, distToEdge,
+  awardClear, nextLevel, useHint, refillHearts,
+} from '../src/logic.js';
 
 // Build a gd with a hand-crafted board (bypasses the generator).
 function makeGd(cols, rows, cells) {
@@ -100,4 +101,54 @@ test('losing all hearts fails the level', () => {
   assert.equal(gd.screen, 'fail');
   // taps are inert once dead
   assert.equal(tapCell(gd, balance, 1, 0), 'none');
+});
+
+test('useHint charges gold and marks a free arrow exactly once', () => {
+  const gd = makeGd(2, 1, [[0, 0, 3], [1, 0, 3]]);
+  gd.gold = balance.hintCost - 1;
+  assert.equal(useHint(gd, balance), false); // can't afford
+  gd.gold = balance.hintCost;
+  assert.equal(useHint(gd, balance), true);
+  assert.equal(gd.gold, 0);
+  assert.equal(gd.hintIndex, 0); // the only free arrow
+  gd.gold = 100;
+  assert.equal(useHint(gd, balance), false); // hint already showing
+  assert.equal(gd.gold, 100);
+});
+
+test('refillHearts only works on the fail screen and charges gold', () => {
+  const gd = makeGd(2, 1, [[0, 0, 1], [1, 0, 0]]);
+  gd.gold = 100;
+  assert.equal(refillHearts(gd, balance), false); // not on fail screen
+  gd.screen = 'fail';
+  gd.hearts = 0;
+  assert.equal(refillHearts(gd, balance), true);
+  assert.equal(gd.gold, 100 - balance.refillCost);
+  assert.equal(gd.hearts, balance.hearts);
+  assert.equal(gd.screen, 'game');
+  // broke players can't refill
+  gd.screen = 'fail';
+  gd.gold = balance.refillCost - 1;
+  assert.equal(refillHearts(gd, balance), false);
+  assert.equal(gd.screen, 'fail');
+});
+
+test('awardClear pays base without bonus after a bump', () => {
+  const gd = makeGd(2, 1, [[0, 0, 3]]);
+  gd.flawless = false;
+  gd.gold = 0;
+  awardClear(gd, balance);
+  assert.equal(gd.gold, balance.goldPerClear);
+  assert.equal(gd.goldEarnedBonus, 0);
+});
+
+test('nextLevel advances and regenerates', () => {
+  const gd = allocGameData(balance);
+  gd.level = 4;
+  startLevel(gd, balance);
+  nextLevel(gd, balance);
+  assert.equal(gd.level, 5);
+  assert.equal(gd.screen, 'game');
+  assert.equal(gd.hearts, balance.hearts);
+  assert.ok(gd.remaining > 0);
 });

@@ -131,3 +131,29 @@ export function awardClear(gd, balance) {
   gd.goldEarnedBonus = gd.flawless ? balance.flawlessBonus : 0;
   gd.gold += gd.goldEarnedClear + gd.goldEarnedBonus;
 }
+
+export function nextLevel(gd, balance) {
+  gd.level++;
+  startLevel(gd, balance);
+}
+
+export function useHint(gd, balance) {
+  if (gd.screen !== 'game' || gd.hintIndex >= 0 || gd.gold < balance.hintCost) return false;
+  const idx = findHint(gd.board, gd.cols, gd.rows);
+  if (idx < 0) return false;
+  gd.gold -= balance.hintCost;
+  gd.hintIndex = idx;
+  gd.hintPulse = 0;
+  gd.dirty = true;
+  return true;
+}
+
+export function refillHearts(gd, balance) {
+  if (gd.screen !== 'fail' || gd.gold < balance.refillCost) return false;
+  gd.gold -= balance.refillCost;
+  gd.hearts = balance.hearts;
+  gd.failTimer = 0;
+  gd.screen = 'game';
+  gd.dirty = true;
+  return true;
+}
