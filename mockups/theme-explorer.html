@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>ArrowEscape — Theme Explorer</title>
+<style>
+  html, body {
+    margin: 0; width: 100%; height: 100%; overflow: hidden;
+    background: #15171c; font-family: -apple-system, system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+  }
+  #toolbar {
+    display: flex; gap: 8px; padding: 10px; flex-wrap: wrap; justify-content: center;
+  }
+  #toolbar button {
+    font-size: 15px; padding: 8px 16px; border-radius: 10px; border: 2px solid transparent;
+    background: #2a2e38; color: #cfd4e0; cursor: pointer;
+  }
+  #toolbar button.active { border-color: #6ea8ff; color: #fff; }
+  #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; width: 100%; }
+  canvas {
+    display: block; max-width: 100%; max-height: 100%; object-fit: contain;
+    touch-action: none; -webkit-tap-highlight-color: transparent;
+  }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <button id="themeA" class="active">A · Paper Minimal</button>
+  <button id="themeB">B · Soft Color</button>
+  <button id="themeC">C · Dark Neon</button>
+  <button id="newLevel">↻ New board</button>
+</div>
+<div id="stage"><canvas id="cv" width="1080" height="1920"></canvas></div>
+<script>
+'use strict';
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const W = 1080, H = 1920;
+const COLS = 7, ROWS = 9;
+const CELL = 130;
+const BOARD_W = COLS * CELL, BOARD_H = ROWS * CELL;
+const BX = (W - BOARD_W) / 2, BY = 420;
+const DIRS = [[0,-1],[1,0],[0,1],[-1,0]]; // up right down left
+
+// ---------- themes ----------
+const THEMES = {
+  A: { name: 'Paper Minimal',
+    bg: '#f4f1ea', boardBg: '#ece8df', cell: '#f4f1ea', cellLine: '#dcd7cb',
+    tile: '#2b2b2e', tileText: '#f4f1ea', accent: '#e2574c',
+    hud: '#2b2b2e', hudSub: '#8a857a',
+    dirColors: null, glow: false },
+  B: { name: 'Soft Color',
+    bg: '#eef3f8', boardBg: '#e0e8f2', cell: '#eef3f8', cellLine: '#d2dce9',
+    tile: '#ffffff', tileText: '#ffffff', accent: '#ff6b6b',
+    hud: '#2e3a4d', hudSub: '#80a4bd',
+    dirColors: ['#5b8def','#43c59f','#f2a541','#e2574c'], glow: false },
+  C: { name: 'Dark Neon',
+    bg: '#101218', boardBg: '#181b24', cell: '#101218', cellLine: '#232733',
+    tile: '#222633', tileText: '#0e1016', accent: '#ff4d6d',
+    hud: '#e8ecf5', hudSub: '#5b6275',
+    dirColors: ['#4dd2ff','#7CFF6B','#ffd24d','#ff7ab8'], glow: true },
+};
+let theme = THEMES.A;
+
+// ---------- seeded rng ----------
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;}}
+
+// ---------- board / generator (reverse construction => always solvable) ----------
+let arrows = [];      // {c, r, dir, state:'idle'|'fly'|'bump', t, fx, fy}
+let grid = [];        // grid[r][c] = arrow or null
+let hearts = 3, cleared = 0, total = 0, seed = 12345;
+let shakeT = 0, wonT = 0;
+
+function pathClear(c, r, dir, ignore) {
+  const [dx, dy] = DIRS[dir];
+  let x = c + dx, y = r + dy;
+  while (x >= 0 && x < COLS && y >= 0 && y < ROWS) {
+    const a = grid[y][x];
+    if (a && a !== ignore && a.state !== 'fly') return false;
+    x += dx; y += dy;
+  }
+  return true;
+}
+
+function generate(s) {
+  const rnd = mulberry32(s);
+  arrows = []; grid = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+  hearts = 3; cleared = 0; wonT = 0;
+  const target = 34;
+  let guard = 4000;
+  while (arrows.length < target && guard-- > 0) {
+    const c = (rnd() * COLS) | 0, r = (rnd() * ROWS) | 0;
+    if (grid[r][c]) continue;
+    const d0 = (rnd() * 4) | 0;
+    for (let k = 0; k < 4; k++) {
+      const dir = (d0 + k) % 4;
+      if (pathClear(c, r, dir, null)) {
+        const a = { c, r, dir, state: 'idle', t: 0, fx: 0, fy: 0 };
+        arrows.push(a); grid[r][c] = a;
+        break;
+      }
+    }
+  }
+  total = arrows.length;
+}
+
+// ---------- input ----------
+let rect = cv.getBoundingClientRect(), scaleX = W / rect.width, scaleY = H / rect.height;
+addEventListener('resize', () => { rect = cv.getBoundingClientRect(); scaleX = W / rect.width; scaleY = H / rect.height; });
+cv.addEventListener('pointerdown', e => {
+  rect = cv.getBoundingClientRect(); scaleX = W / rect.width; scaleY = H / rect.height;
+  const px = (e.clientX - rect.left) * scaleX, py = (e.clientY - rect.top) * scaleY;
+  const c = Math.floor((px - BX) / CELL), r = Math.floor((py - BY) / CELL);
+  if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return;
+  const a = grid[r] && grid[r][c];
+  if (!a || a.state !== 'idle' || hearts <= 0) return;
+  if (pathClear(a.c, a.r, a.dir, a)) {
+    a.state = 'fly'; a.t = 0;
+    grid[a.r][a.c] = null;
+  } else {
+    a.state = 'bump'; a.t = 0;
+    hearts--; shakeT = 0.3;
+  }
+});
+
+// ---------- update ----------
+function update(dt) {
+  shakeT = Math.max(0, shakeT - dt);
+  for (let i = arrows.length - 1; i >= 0; i--) {
+    const a = arrows[i];
+    if (a.state === 'fly') {
+      a.t += dt;
+      const sp = 2600 * a.t + 800 * a.t * a.t;
+      a.fx = DIRS[a.dir][0] * sp; a.fy = DIRS[a.dir][1] * sp;
+      const x = BX + a.c * CELL + a.fx, y = BY + a.r * CELL + a.fy;
+      if (x < -CELL * 2 || x > W + CELL || y < -CELL * 2 || y > H + CELL) {
+        arrows.splice(i, 1); cleared++;
+        if (arrows.length === 0) wonT = 0.001;
+      }
+    } else if (a.state === 'bump') {
+      a.t += dt;
+      const k = Math.sin(Math.min(a.t / 0.25, 1) * Math.PI) * 28;
+      a.fx = DIRS[a.dir][0] * k; a.fy = DIRS[a.dir][1] * k;
+      if (a.t >= 0.25) { a.state = 'idle'; a.fx = a.fy = 0; }
+    }
+  }
+  if (wonT > 0) wonT += dt;
+}
+
+// ---------- render ----------
+function rr(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+function drawArrow(a) {
+  const pad = 10;
+  const x = BX + a.c * CELL + a.fx + pad, y = BY + a.r * CELL + a.fy + pad;
+  const s = CELL - pad * 2;
+  const fill = theme.dirColors ? theme.dirColors[a.dir] : theme.tile;
+  if (theme.glow) { ctx.shadowColor = fill; ctx.shadowBlur = 22; }
+  ctx.fillStyle = fill;
+  rr(x, y, s, s, 26); ctx.fill();
+  ctx.shadowBlur = 0;
+  // arrow glyph
+  ctx.save();
+  ctx.translate(x + s / 2, y + s / 2);
+  ctx.rotate(a.dir * Math.PI / 2);
+  ctx.fillStyle = theme.dirColors && !theme.glow ? '#ffffff' : theme.tileText;
+  ctx.beginPath();
+  ctx.moveTo(0, -34); ctx.lineTo(26, 2); ctx.lineTo(10, 2); ctx.lineTo(10, 32);
+  ctx.lineTo(-10, 32); ctx.lineTo(-10, 2); ctx.lineTo(-26, 2);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function render() {
+  ctx.fillStyle = theme.bg; ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  if (shakeT > 0) ctx.translate((Math.random() - 0.5) * 14 * shakeT, (Math.random() - 0.5) * 14 * shakeT);
+
+  // HUD
+  ctx.fillStyle = theme.hud; ctx.textAlign = 'center';
+  ctx.font = '700 96px system-ui'; ctx.fillText('ARROW ESCAPE', W / 2, 170);
+  ctx.font = '600 44px system-ui'; ctx.fillStyle = theme.hudSub;
+  ctx.fillText('Theme: ' + theme.name + '  ·  tap arrows to free them', W / 2, 245);
+  // hearts
+  ctx.font = '60px system-ui'; ctx.textAlign = 'center';
+  let hs = '';
+  for (let i = 0; i < 3; i++) hs += i < hearts ? '❤️' : '🖤';
+  ctx.fillText(hs, W / 2, 340);
+
+  // board
+  ctx.fillStyle = theme.boardBg; rr(BX - 18, BY - 18, BOARD_W + 36, BOARD_H + 36, 30); ctx.fill();
+  ctx.strokeStyle = theme.cellLine; ctx.lineWidth = 2;
+  for (let r = 0; r <= ROWS; r++) { ctx.beginPath(); ctx.moveTo(BX, BY + r * CELL); ctx.lineTo(BX + BOARD_W, BY + r * CELL); ctx.stroke(); }
+  for (let c = 0; c <= COLS; c++) { ctx.beginPath(); ctx.moveTo(BX + c * CELL, BY); ctx.lineTo(BX + c * CELL, BY + BOARD_H); ctx.stroke(); }
+
+  for (const a of arrows) drawArrow(a);
+
+  // footer status
+  ctx.fillStyle = theme.hudSub; ctx.font = '600 44px system-ui';
+  ctx.fillText(cleared + ' / ' + total + ' escaped', W / 2, BY + BOARD_H + 110);
+  if (hearts <= 0) {
+    ctx.fillStyle = theme.accent; ctx.font = '700 96px system-ui';
+    ctx.fillText('OUT OF HEARTS', W / 2, BY + BOARD_H + 220);
+  }
+  if (wonT > 0) {
+    ctx.fillStyle = theme.accent; ctx.font = '700 96px system-ui';
+    ctx.fillText('LEVEL CLEAR!', W / 2, BY + BOARD_H / 2);
+  }
+  ctx.restore();
+}
+
+// ---------- loop ----------
+let lastT = performance.now();
+function frame(t) {
+  const dt = Math.min((t - lastT) / 1000, 1 / 30); lastT = t;
+  update(dt); render();
+  requestAnimationFrame(frame);
+}
+
+// ---------- toolbar ----------
+function setTheme(key, btn) {
+  theme = THEMES[key];
+  document.querySelectorAll('#toolbar button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+document.getElementById('themeA').onclick = e => setTheme('A', e.target);
+document.getElementById('themeB').onclick = e => setTheme('B', e.target);
+document.getElementById('themeC').onclick = e => setTheme('C', e.target);
+document.getElementById('newLevel').onclick = () => { seed = (seed * 1103515245 + 12345) >>> 0; generate(seed); };
+
+generate(seed);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
