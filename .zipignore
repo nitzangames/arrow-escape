@@ -1,0 +1,7 @@
+.git/*
+docs/*
+mockups/*
+tests/*
+GDD.md
+package.json
+.zipignore
