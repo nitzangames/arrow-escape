@@ -4,6 +4,7 @@ import { balance } from '../src/balance.js';
 import {
   EMPTY, DIRS, mulberry32, levelSeed, rampFor,
   pathClear, buildBoard, simulateWaves,
+  scoreBoard, targetDifficulty, isBreather, pickCandidate, generateLevel,
 } from '../src/generator.js';
 
 test('mulberry32 is deterministic per seed', () => {
@@ -69,4 +70,62 @@ test('simulateWaves counts waves and detects the dense-chain shape', () => {
   assert.equal(r.waves, 4);
   // simulateWaves must not mutate its input
   assert.deepEqual(Array.from(chain), [3, 3, 3, 3]);
+});
+
+test('scoreBoard ranks a forced chain above a free spread', () => {
+  // chain: 1×4 all pointing left → waves 4, only 1 of 4 free
+  const chain = new Int8Array([3, 3, 3, 3]);
+  // spread: 4×4 with 4 arrows each having a clear exit → waves 1, all free
+  const spread = new Int8Array(16).fill(EMPTY);
+  spread[0] = 0; spread[5] = 3; spread[10] = 1; spread[15] = 2;
+  const w = balance.scoreWeights;
+  assert.ok(scoreBoard(chain, 4, 1, w) > scoreBoard(spread, 4, 4, w));
+  assert.equal(scoreBoard(new Int8Array(16).fill(EMPTY), 4, 4, w), 0);
+});
+
+test('simulateWaves reports cleared:false on an unsolvable board', () => {
+  // 2×2 rotational deadlock: each arrow blocked by the next
+  // (r=0,c=0)=right blocked by (r=0,c=1); (r=0,c=1)=down blocked by (r=1,c=1);
+  // (r=1,c=1)=left blocked by (r=1,c=0); (r=1,c=0)=up blocked by (r=0,c=0)
+  const lock = new Int8Array([1, 2, 0, 3]);
+  const r = simulateWaves(lock, 2, 2);
+  assert.equal(r.cleared, false);
+});
+
+test('targetDifficulty rises with level and dips on breathers', () => {
+  assert.ok(targetDifficulty(100, balance) > targetDifficulty(11, balance));
+  assert.ok(targetDifficulty(300, balance) > targetDifficulty(100, balance));
+  // level 10 is a breather (10 % 5 === 0): below both neighbours
+  assert.ok(isBreather(10, balance));
+  assert.ok(!isBreather(11, balance));
+  assert.ok(targetDifficulty(10, balance) < targetDifficulty(9, balance));
+  assert.ok(targetDifficulty(10, balance) < targetDifficulty(11, balance));
+  // level 1 is never a breather
+  assert.ok(!isBreather(1, balance));
+});
+
+test('pickCandidate selects the closest score, first on ties', () => {
+  assert.equal(pickCandidate([3, 7, 1], 6.5), 1);
+  assert.equal(pickCandidate([5, 5], 5), 0);
+  assert.equal(pickCandidate([9], 2), 0);
+});
+
+test('generateLevel is deterministic and always solvable', () => {
+  for (const level of [1, 7, 25, 55, 150, 400]) {
+    const g1 = generateLevel(level, balance);
+    const g2 = generateLevel(level, balance);
+    assert.deepEqual(Array.from(g1.board), Array.from(g2.board), `level ${level} not deterministic`);
+    assert.equal(g1.count, g2.count);
+    const { cleared } = simulateWaves(g1.board, g1.cols, g1.rows);
+    assert.ok(cleared, `level ${level} not solvable`);
+    assert.ok(g1.count > 0);
+  }
+});
+
+test('difficulty broadly rises across the ramp', () => {
+  const w = balance.scoreWeights;
+  let early = 0, late = 0;
+  for (let n = 1; n <= 30; n++) early += generateLevel(n, balance).score;
+  for (let n = 220; n <= 250; n++) late += generateLevel(n, balance).score;
+  assert.ok(late / 31 > early / 30, `late mean ${late / 31} not above early mean ${early / 30}`);
 });

@@ -85,3 +85,59 @@ export function simulateWaves(board, cols, rows) {
   }
   return { waves, cleared: true };
 }
+
+// Difficulty score: more waves (forced ordering), more initially-blocked
+// arrows, and more arrows overall = harder. Weights live in balance.scoreWeights.
+export function scoreBoard(board, cols, rows, weights) {
+  let arrowCount = 0, freeCount = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const v = board[r * cols + c];
+      if (v === EMPTY) continue;
+      arrowCount++;
+      if (pathClear(board, cols, rows, c, r, v)) freeCount++;
+    }
+  }
+  if (arrowCount === 0) return 0;
+  const freeRatio = freeCount / arrowCount;
+  const { waves } = simulateWaves(board, cols, rows);
+  return waves * weights.wave + (1 - freeRatio) * weights.blocked + arrowCount * weights.count;
+}
+
+export function isBreather(level, balance) {
+  return level > 1 && level % balance.breatherEvery === 0;
+}
+
+export function targetDifficulty(level, balance) {
+  const t = Math.min(level / balance.rampEndLevel, 1);
+  let target = balance.minTarget + (balance.maxTarget - balance.minTarget) * t;
+  if (isBreather(level, balance)) target *= balance.breatherEase;
+  return target;
+}
+
+export function pickCandidate(scores, target) {
+  let best = 0;
+  let bestDist = Math.abs(scores[0] - target);
+  for (let i = 1; i < scores.length; i++) {
+    const d = Math.abs(scores[i] - target);
+    if (d < bestDist) { best = i; bestDist = d; }
+  }
+  return best;
+}
+
+// Level N: generate `balance.candidates` boards from derived seeds, score
+// each, return the one closest to the level's difficulty target.
+export function generateLevel(level, balance) {
+  const { cols, rows, minArrows, maxArrows } = rampFor(level, balance);
+  const boards = [];
+  const scores = [];
+  for (let k = 0; k < balance.candidates; k++) {
+    const rng = mulberry32(levelSeed(level, k));
+    const targetArrows = minArrows + ((rng() * (maxArrows - minArrows + 1)) | 0);
+    const built = buildBoard(rng, cols, rows, targetArrows);
+    boards.push(built);
+    scores.push(scoreBoard(built.board, cols, rows, balance.scoreWeights));
+  }
+  const pick = pickCandidate(scores, targetDifficulty(level, balance));
+  return { cols, rows, board: boards[pick].board, count: boards[pick].count, score: scores[pick] };
+}
