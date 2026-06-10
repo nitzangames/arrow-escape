@@ -72,6 +72,11 @@ test('flights despawn and the level clears after the last arrow leaves', () => {
   assert.equal(tapCell(gd, balance, 1, 0), 'fly'); // now unblocked
   assert.equal(gd.remaining, 0);
   assert.ok(gd.clearTimer > 0);
+  // clearTimer must hold (not count down) while flights are still airborne
+  const timerBefore = gd.clearTimer;
+  tick(gd, balance, 1 / 60);
+  assert.ok(gd.flights.count > 0);
+  assert.equal(gd.clearTimer, timerBefore);
   const goldBefore = gd.gold;
   runTicks(gd, 3);
   assert.equal(gd.flights.count, 0);

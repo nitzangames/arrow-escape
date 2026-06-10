@@ -46,7 +46,7 @@ function spawnFlight(gd, balance, c, r, dir) {
     f.count++;
     return;
   }
-  // Pool exhausted: the arrow simply vanishes (remaining already decremented).
+  // Pool exhausted: the arrow simply vanishes (caller decrements remaining).
 }
 
 export function tapCell(gd, balance, c, r) {
@@ -72,6 +72,8 @@ export function tapCell(gd, balance, c, r) {
   return 'bump';
 }
 
+// Callers must clamp dt (the rAF loop caps at 1/30 s) — a multi-second dt
+// from a tab restore would expire timers and snap flights in one tick.
 export function tick(gd, balance, dt) {
   if (gd.screen !== 'game') return;
   let animating = false;
@@ -113,6 +115,8 @@ export function tick(gd, balance, dt) {
     }
     animating = true;
   }
+  // Unlike clearTimer, failTimer doesn't wait for flights: fail comes from a
+  // bump, and with current balance all flights drain well within failDelay.
   if (gd.failTimer > 0) {
     gd.failTimer -= dt;
     if (gd.failTimer <= 0) gd.screen = 'fail';
