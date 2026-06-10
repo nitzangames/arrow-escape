@@ -36,7 +36,7 @@ Board size and arrow count scale with level number `N` (all values live in `bala
 | 121–300  | 7×10  | 40–55  |
 | 301+     | 8×11  | 55–70  |
 
-A **sawtooth** keeps pacing relaxing: the difficulty target dips on every 5th level (a "breather" board), mirroring the reference game's hard/easy alternation.
+A **sawtooth** keeps pacing relaxing: every 5th level is a "breather" board (the easiest of its candidate pool), mirroring the reference game's hard/easy alternation.
 
 ### Level generation (in `generator.js`)
 

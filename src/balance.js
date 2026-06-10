@@ -1,4 +1,4 @@
-export const VERSION = 'v0.1.3';
+export const VERSION = 'v0.1.4';
 
 export const balance = {
   canvasW: 1080,
@@ -15,7 +15,7 @@ export const balance = {
     [300, 7, 10, 40, 55],
     [Infinity, 8, 11, 55, 70],
   ],
-  candidates: 8,          // boards generated per level, best-matching picked
+  candidates: 8,          // boards generated per level, picked by percentile
   breatherEvery: 5,       // every 5th level is an easier "breather"
   percentileMin: 0.3,     // normal-level difficulty percentile at bracket start
   percentileMax: 0.9,     // ... at bracket end
