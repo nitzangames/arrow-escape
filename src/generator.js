@@ -134,6 +134,37 @@ export function pickIndexForLevel(level, scores, balance) {
   return order[Math.round(p * (order.length - 1))];
 }
 
+// Hint: among currently-free arrows, pick the one whose removal frees the
+// most blocked arrows (ties → lowest index). Returns a cell index, or -1.
+// Temporarily toggles cells but always restores them before returning.
+export function findHint(board, cols, rows) {
+  let bestIdx = -1;
+  let bestGain = -1;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const i = r * cols + c;
+      const v = board[i];
+      if (v === EMPTY || !pathClear(board, cols, rows, c, r, v)) continue;
+      let gain = 0;
+      for (let r2 = 0; r2 < rows; r2++) {
+        for (let c2 = 0; c2 < cols; c2++) {
+          const j = r2 * cols + c2;
+          const v2 = board[j];
+          if (j === i || v2 === EMPTY) continue;
+          const freeBefore = pathClear(board, cols, rows, c2, r2, v2);
+          if (freeBefore) continue;
+          board[i] = EMPTY;
+          const freeAfter = pathClear(board, cols, rows, c2, r2, v2);
+          board[i] = v;
+          if (freeAfter) gain++;
+        }
+      }
+      if (gain > bestGain) { bestGain = gain; bestIdx = i; }
+    }
+  }
+  return bestIdx;
+}
+
 // Level N: generate `balance.candidates` boards from derived seeds, score
 // each, return the one at the level's percentile within the candidate pool.
 export function generateLevel(level, balance) {

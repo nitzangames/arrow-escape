@@ -4,7 +4,7 @@ import { balance } from '../src/balance.js';
 import {
   EMPTY, DIRS, mulberry32, levelSeed, rampFor,
   pathClear, buildBoard, simulateWaves,
-  scoreBoard, isBreather, pickIndexForLevel, generateLevel,
+  scoreBoard, isBreather, pickIndexForLevel, generateLevel, findHint,
 } from '../src/generator.js';
 
 test('mulberry32 is deterministic per seed', () => {
@@ -144,4 +144,36 @@ test('difficulty broadly rises across the ramp', () => {
   for (let n = 1; n <= 30; n++) early += generateLevel(n, balance).score;
   for (let n = 220; n <= 250; n++) late += generateLevel(n, balance).score;
   assert.ok(late / 31 > early / 30, `late mean ${late / 31} not above early mean ${early / 30}`);
+});
+
+test('findHint returns the only free arrow', () => {
+  // 3×1 row all pointing left: only index 0 is free
+  const board = new Int8Array([3, 3, 3]);
+  assert.equal(findHint(board, 3, 1), 0);
+});
+
+test('findHint prefers the free arrow that unblocks the most others', () => {
+  // 3×2 grid:
+  //   (1,0)=up    free, unblocks nothing
+  //   (2,0)=right free, unblocks (2,1)
+  //   (2,1)=up    blocked by (2,0)
+  const cols = 3, rows = 2;
+  const board = new Int8Array(cols * rows).fill(EMPTY);
+  board[0 * cols + 1] = 0;
+  board[0 * cols + 2] = 1;
+  board[1 * cols + 2] = 0;
+  assert.equal(findHint(board, cols, rows), 0 * cols + 2);
+});
+
+test('findHint returns -1 on an empty board and never mutates', () => {
+  assert.equal(findHint(new Int8Array(9).fill(EMPTY), 3, 3), -1);
+  const g = generateLevel(33, balance);
+  const before = Array.from(g.board);
+  const idx = findHint(g.board, g.cols, g.rows);
+  assert.deepEqual(Array.from(g.board), before);
+  // hint must be a real, currently-free arrow
+  assert.ok(idx >= 0);
+  const c = idx % g.cols, r = (idx / g.cols) | 0;
+  assert.notEqual(g.board[idx], EMPTY);
+  assert.ok(pathClear(g.board, g.cols, g.rows, c, r, g.board[idx]));
 });
