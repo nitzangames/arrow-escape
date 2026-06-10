@@ -42,7 +42,7 @@ A **sawtooth** keeps pacing relaxing: the difficulty target dips on every 5th le
 
 - **Seeded RNG:** mulberry32. Seed derived deterministically from level number → same level N is the same board for every player, forever. Failing and retrying a level replays the identical board.
 - **Reverse construction guarantees solvability:** start from an empty board; place arrows one at a time, each only in a cell/direction whose exit path is clear *at placement time*. The reverse of placement order is then a valid solution.
-- **Candidate scoring smooths the curve:** for level N, generate 8 candidate boards (seeds `hash(N, 0..7)`), score each, pick the candidate closest to the target difficulty `D(N)`.
+- **Candidate scoring smooths the curve:** for level N, generate 8 candidate boards (seeds `hash(N, 0..7)`), score each, and pick by *percentile within the candidate pool*: breather levels take the easiest candidate; normal levels ramp from the 30th to the 90th percentile across their bracket. Distribution-relative selection auto-calibrates to whatever scores each board size can produce (an absolute target curve was tried first and degenerated to easiest-of-8 for mid-game brackets).
 
 **Difficulty score** of a board (weights in `balance.js`):
 
@@ -50,7 +50,7 @@ A **sawtooth** keeps pacing relaxing: the difficulty target dips on every 5th le
 - `waveDepth` — repeatedly remove all currently-free arrows in waves until empty; the number of waves (higher = harder; measures sequential dependency).
 - `arrowCount` — raw volume.
 
-`D(N)` rises smoothly with N and dips on every 5th level (sawtooth).
+Selection percentile rises smoothly within each bracket and drops to the floor on every 5th level (sawtooth).
 
 ## 2. Progression & economy
 

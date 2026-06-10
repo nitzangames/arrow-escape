@@ -108,25 +108,34 @@ export function isBreather(level, balance) {
   return level > 1 && level % balance.breatherEvery === 0;
 }
 
-export function targetDifficulty(level, balance) {
-  const t = Math.min(level / balance.rampEndLevel, 1);
-  let target = balance.minTarget + (balance.maxTarget - balance.minTarget) * t;
-  if (isBreather(level, balance)) target *= balance.breatherEase;
-  return target;
+// Bracket [start..end] containing `level` (end of the open last bracket is
+// virtualized to openBracketSpan levels).
+export function bracketRange(level, balance) {
+  let start = 1;
+  for (const [maxLevel] of balance.ramp) {
+    if (level <= maxLevel) {
+      const end = maxLevel === Infinity ? start + balance.openBracketSpan - 1 : maxLevel;
+      return { start, end };
+    }
+    start = maxLevel + 1;
+  }
 }
 
-export function pickCandidate(scores, target) {
-  let best = 0;
-  let bestDist = Math.abs(scores[0] - target);
-  for (let i = 1; i < scores.length; i++) {
-    const d = Math.abs(scores[i] - target);
-    if (d < bestDist) { best = i; bestDist = d; }
-  }
-  return best;
+// Difficulty is distribution-relative: rank candidates by score, then pick
+// by percentile — breathers take the easiest candidate, normal levels ramp
+// from percentileMin to percentileMax across their bracket. This
+// auto-calibrates to whatever scores each board size can actually produce.
+export function pickIndexForLevel(level, scores, balance) {
+  const order = scores.map((s, i) => i).sort((a, b) => scores[a] - scores[b] || a - b);
+  if (isBreather(level, balance)) return order[0];
+  const { start, end } = bracketRange(level, balance);
+  const pos = end > start ? Math.min((level - start) / (end - start), 1) : 1;
+  const p = balance.percentileMin + (balance.percentileMax - balance.percentileMin) * pos;
+  return order[Math.round(p * (order.length - 1))];
 }
 
 // Level N: generate `balance.candidates` boards from derived seeds, score
-// each, return the one closest to the level's difficulty target.
+// each, return the one at the level's percentile within the candidate pool.
 export function generateLevel(level, balance) {
   const { cols, rows, minArrows, maxArrows } = rampFor(level, balance);
   const boards = [];
@@ -138,6 +147,6 @@ export function generateLevel(level, balance) {
     boards.push(built);
     scores.push(scoreBoard(built.board, cols, rows, balance.scoreWeights));
   }
-  const pick = pickCandidate(scores, targetDifficulty(level, balance));
+  const pick = pickIndexForLevel(level, scores, balance);
   return { cols, rows, board: boards[pick].board, count: boards[pick].count, score: scores[pick] };
 }

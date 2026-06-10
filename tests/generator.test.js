@@ -4,7 +4,7 @@ import { balance } from '../src/balance.js';
 import {
   EMPTY, DIRS, mulberry32, levelSeed, rampFor,
   pathClear, buildBoard, simulateWaves,
-  scoreBoard, targetDifficulty, isBreather, pickCandidate, generateLevel,
+  scoreBoard, isBreather, pickIndexForLevel, generateLevel,
 } from '../src/generator.js';
 
 test('mulberry32 is deterministic per seed', () => {
@@ -92,22 +92,38 @@ test('simulateWaves reports cleared:false on an unsolvable board', () => {
   assert.equal(r.cleared, false);
 });
 
-test('targetDifficulty rises with level and dips on breathers', () => {
-  assert.ok(targetDifficulty(100, balance) > targetDifficulty(11, balance));
-  assert.ok(targetDifficulty(300, balance) > targetDifficulty(100, balance));
-  // level 10 is a breather (10 % 5 === 0): below both neighbours
+test('isBreather flags every 5th level except level 1', () => {
   assert.ok(isBreather(10, balance));
+  assert.ok(isBreather(25, balance));
   assert.ok(!isBreather(11, balance));
-  assert.ok(targetDifficulty(10, balance) < targetDifficulty(9, balance));
-  assert.ok(targetDifficulty(10, balance) < targetDifficulty(11, balance));
-  // level 1 is never a breather
   assert.ok(!isBreather(1, balance));
 });
 
-test('pickCandidate selects the closest score, first on ties', () => {
-  assert.equal(pickCandidate([3, 7, 1], 6.5), 1);
-  assert.equal(pickCandidate([5, 5], 5), 0);
-  assert.equal(pickCandidate([9], 2), 0);
+test('pickIndexForLevel: breathers take the easiest candidate, ramp rises within a bracket', () => {
+  const scores = [5, 9, 1, 7, 3, 8, 2, 6]; // sorted order: idx 2,6,4,0,7,3,5,1
+  assert.equal(pickIndexForLevel(10, scores, balance), 2); // breather → easiest
+  // bracket 31..60: level 31 → percentileMin, level 60 → percentileMax
+  const early = pickIndexForLevel(31, scores, balance);
+  const late = pickIndexForLevel(59, scores, balance); // 60 is a breather, use 59
+  assert.ok(scores[late] > scores[early],
+    `late pick ${scores[late]} should exceed early pick ${scores[early]}`);
+  // deterministic
+  assert.equal(pickIndexForLevel(31, scores, balance), early);
+});
+
+test('breather boards are genuinely easier than neighbors in every bracket', () => {
+  // For each bracket, mean picked score of breather levels must be below
+  // mean of normal levels — this is the test that failed the old design.
+  const brackets = [[11, 30], [31, 60], [61, 120], [121, 200]];
+  for (const [lo, hi] of brackets) {
+    let bSum = 0, bN = 0, nSum = 0, nN = 0;
+    for (let lvl = lo; lvl <= hi; lvl++) {
+      const s = generateLevel(lvl, balance).score;
+      if (isBreather(lvl, balance)) { bSum += s; bN++; } else { nSum += s; nN++; }
+    }
+    assert.ok(bSum / bN < nSum / nN,
+      `bracket ${lo}-${hi}: breather mean ${bSum / bN} not below normal mean ${nSum / nN}`);
+  }
 });
 
 test('generateLevel is deterministic and always solvable', () => {
