@@ -1,4 +1,4 @@
-export const VERSION = 'v0.1.16';
+export const VERSION = 'v0.1.17';
 
 export const balance = {
   canvasW: 1080,
@@ -6,14 +6,15 @@ export const balance = {
 
   // NOTE: these constants are part of the level-determinism contract — changing
   // any of them after launch reshuffles every player's boards.
-  // Level ramp brackets: [maxLevel, cols, rows, minPieces, maxPieces, minLen, maxLen]
+  // Level ramp brackets: [maxLevel, cols, rows, minLen, maxLen, longBias]
+  // Boards are always 100% filled; piece count emerges from the length mix.
   ramp: [
-    [10, 4, 5, 4, 6, 1, 3],
-    [30, 5, 7, 6, 9, 1, 4],
-    [60, 6, 8, 8, 12, 2, 4],
-    [120, 7, 9, 10, 15, 2, 5],
-    [300, 7, 10, 12, 17, 2, 5],
-    [Infinity, 8, 11, 15, 21, 2, 5],
+    [10, 4, 5, 1, 4, 0],
+    [30, 5, 7, 1, 5, 0.2],
+    [60, 6, 8, 1, 5, 0.35],
+    [120, 7, 9, 1, 6, 0.5],
+    [300, 7, 10, 1, 7, 0.6],
+    [Infinity, 8, 11, 1, 7, 0.7],
   ],
   candidates: 8,          // boards generated per level, picked by percentile
   breatherEvery: 5,       // every 5th level is an easier "breather"

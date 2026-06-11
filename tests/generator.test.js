@@ -2,12 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { balance } from '../src/balance.js';
 import {
-  EMPTY, DIRS, mulberry32, levelSeed, rampFor, rayClear,
+  EMPTY, WALL, DIRS, mulberry32, levelSeed, rampFor, rayClear,
   buildBoard, simulateWaves, scoreBoard, isBreather,
   pickIndexForLevel, generateLevel, findHint,
 } from '../src/generator.js';
 
-// Hand-built board: defs = [{cells, dir}, ...]
+// Hand-built board: defs = [{cells, dir}, ...] — sparse boards are fine for
+// the analysis helpers (only the generator promises full fill).
 function makeBoard(cols, rows, defs) {
   const grid = new Int16Array(cols * rows).fill(EMPTY);
   const pieces = defs.map((d, id) => {
@@ -15,6 +16,38 @@ function makeBoard(cols, rows, defs) {
     return { cells: d.cells, dir: d.dir };
   });
   return { pieces, grid };
+}
+
+// Assert a board is well-formed: cells partition the open grid, paths are
+// 4-connected, arrowheads continue the end segment, lengths within bounds.
+function assertWellFormed(b, cols, rows, maxLen) {
+  const seen = new Set();
+  b.pieces.forEach((piece, id) => {
+    assert.ok(piece.cells.length >= 1 && piece.cells.length <= maxLen,
+      `piece ${id} length ${piece.cells.length}`);
+    assert.ok(piece.dir >= 0 && piece.dir <= 3);
+    piece.cells.forEach((ci) => {
+      assert.ok(!seen.has(ci), 'cell overlap');
+      seen.add(ci);
+      assert.equal(b.grid[ci], id, 'grid consistency');
+    });
+    for (let j = 1; j < piece.cells.length; j++) {
+      const a = piece.cells[j - 1], c2 = piece.cells[j];
+      const dc = Math.abs((a % cols) - (c2 % cols));
+      const dr = Math.abs(((a / cols) | 0) - ((c2 / cols) | 0));
+      assert.equal(dc + dr, 1, 'path connectivity');
+    }
+    if (piece.cells.length > 1) {
+      const head = piece.cells[0];
+      const hc = head % cols, hr = (head / cols) | 0;
+      const expected = (hr - DIRS[piece.dir][1]) * cols + (hc - DIRS[piece.dir][0]);
+      assert.equal(piece.cells[1], expected, 'arrowhead continues the end segment');
+    }
+  });
+  for (let i = 0; i < b.grid.length; i++) {
+    if (b.grid[i] === WALL) assert.ok(!seen.has(i), 'piece on a wall');
+    else assert.ok(seen.has(i), `cell ${i} not covered — board not full`);
+  }
 }
 
 test('mulberry32 is deterministic per seed', () => {
@@ -33,9 +66,9 @@ test('levelSeed differs across levels and candidates', () => {
 });
 
 test('rampFor returns the right bracket', () => {
-  assert.deepEqual(rampFor(1, balance), { cols: 4, rows: 5, minPieces: 4, maxPieces: 6, minLen: 1, maxLen: 3 });
-  assert.deepEqual(rampFor(11, balance), { cols: 5, rows: 7, minPieces: 6, maxPieces: 9, minLen: 1, maxLen: 4 });
-  assert.deepEqual(rampFor(301, balance), { cols: 8, rows: 11, minPieces: 15, maxPieces: 21, minLen: 2, maxLen: 5 });
+  assert.deepEqual(rampFor(1, balance), { cols: 4, rows: 5, minLen: 1, maxLen: 4, longBias: 0 });
+  assert.deepEqual(rampFor(11, balance), { cols: 5, rows: 7, minLen: 1, maxLen: 5, longBias: 0.2 });
+  assert.deepEqual(rampFor(301, balance), { cols: 8, rows: 11, minLen: 1, maxLen: 7, longBias: 0.7 });
 });
 
 test('rayClear sees other pieces but exempts own body', () => {
@@ -49,44 +82,42 @@ test('rayClear sees other pieces but exempts own body', () => {
   assert.equal(rayClear(grid, 4, 1, 1, 0, 0, 3), true);  // piece 1 exits left at the edge
 });
 
-test('buildBoard produces deterministic, well-formed snakes', () => {
-  const cols = 6, rows = 8;
-  const b1 = buildBoard(mulberry32(7), cols, rows, 10, 1, 5);
-  const b2 = buildBoard(mulberry32(7), cols, rows, 10, 1, 5);
-  assert.deepEqual(b1.pieces, b2.pieces);
-  assert.deepEqual(Array.from(b1.grid), Array.from(b2.grid));
-  assert.ok(b1.pieces.length > 0 && b1.pieces.length <= 10);
-  const seen = new Set();
-  b1.pieces.forEach((piece, id) => {
-    assert.ok(piece.cells.length >= 1 && piece.cells.length <= 5);
-    assert.ok(piece.dir >= 0 && piece.dir <= 3);
-    piece.cells.forEach((ci) => {
-      assert.ok(!seen.has(ci), 'cell overlap');
-      seen.add(ci);
-      assert.equal(b1.grid[ci], id, 'grid consistency');
-    });
-    for (let j = 1; j < piece.cells.length; j++) {
-      const a = piece.cells[j - 1], b = piece.cells[j];
-      const dc = Math.abs((a % cols) - (b % cols));
-      const dr = Math.abs(((a / cols) | 0) - ((b / cols) | 0));
-      assert.equal(dc + dr, 1, 'path connectivity');
-    }
-    if (piece.cells.length > 1) {
-      const head = piece.cells[0];
-      const hc = head % cols, hr = (head / cols) | 0;
-      const expected = (hr - DIRS[piece.dir][1]) * cols + (hc - DIRS[piece.dir][0]);
-      assert.equal(piece.cells[1], expected, 'arrowhead points away from body');
-    }
-  });
-  for (let i = 0; i < b1.grid.length; i++) {
-    if (!seen.has(i)) assert.equal(b1.grid[i], EMPTY);
-  }
+test('WALL cells block rays like pieces', () => {
+  const { grid } = makeBoard(4, 1, [{ cells: [0], dir: 1 }]);
+  grid[2] = WALL;
+  assert.equal(rayClear(grid, 4, 1, 0, 0, 0, 1), false); // right: wall at cell 2
+  assert.equal(rayClear(grid, 4, 1, 0, 0, 0, 3), true);  // left: board edge
 });
 
-test('every built board is solvable by wave removal', () => {
-  for (let seed = 1; seed <= 50; seed++) {
-    const { pieces, grid } = buildBoard(mulberry32(seed), 8, 11, 21, 2, 5);
-    const { cleared } = simulateWaves(pieces, grid, 8, 11);
+test('buildBoard fills every cell with well-formed snakes, deterministically', () => {
+  const cols = 6, rows = 8;
+  const b1 = buildBoard(mulberry32(7), cols, rows, 1, 5, 0.3);
+  const b2 = buildBoard(mulberry32(7), cols, rows, 1, 5, 0.3);
+  assert.ok(b1, 'buildBoard returned null');
+  assert.deepEqual(b1.pieces, b2.pieces);
+  assert.deepEqual(Array.from(b1.grid), Array.from(b2.grid));
+  assertWellFormed(b1, cols, rows, 5);
+  assert.ok(b1.pieces.some((p) => p.cells.length >= 3), 'no long snakes at all');
+});
+
+test('buildBoard respects a mask: walls stay walls, open cells fill, board solves', () => {
+  // 4×4 with the four corners masked out
+  const cols = 4, rows = 4;
+  const mask = new Uint8Array(cols * rows).fill(1);
+  for (const i of [0, 3, 12, 15]) mask[i] = 0;
+  const b = buildBoard(mulberry32(11), cols, rows, 1, 4, 0.3, mask);
+  assert.ok(b, 'masked buildBoard returned null');
+  for (const i of [0, 3, 12, 15]) assert.equal(b.grid[i], WALL);
+  assertWellFormed(b, cols, rows, 4);
+  assert.equal(simulateWaves(b.pieces, b.grid, cols, rows).cleared, true);
+});
+
+test('every built board is full and solvable by wave removal', () => {
+  for (let seed = 1; seed <= 30; seed++) {
+    const b = buildBoard(mulberry32(seed), 8, 11, 1, 7, 0.7);
+    assert.ok(b, `seed ${seed} returned null`);
+    assertWellFormed(b, 8, 11, 7);
+    const { cleared } = simulateWaves(b.pieces, b.grid, 8, 11);
     assert.ok(cleared, `seed ${seed} did not clear`);
   }
 });
@@ -143,15 +174,24 @@ test('pickIndexForLevel: breathers take the easiest candidate, ramp rises within
   assert.equal(pickIndexForLevel(31, scores, balance), early);
 });
 
-test('generateLevel is deterministic and always solvable', () => {
+test('generateLevel is deterministic, full, and always solvable', () => {
   for (const level of [1, 7, 25, 55, 150, 400]) {
     const g1 = generateLevel(level, balance);
     const g2 = generateLevel(level, balance);
     assert.deepEqual(g1.pieces, g2.pieces, `level ${level} not deterministic`);
     assert.deepEqual(Array.from(g1.grid), Array.from(g2.grid));
+    const { maxLen } = rampFor(level, balance);
+    assertWellFormed(g1, g1.cols, g1.rows, maxLen);
     const { cleared } = simulateWaves(g1.pieces, g1.grid, g1.cols, g1.rows);
     assert.ok(cleared, `level ${level} not solvable`);
     assert.ok(g1.count > 0);
+  }
+});
+
+test('generation never wedges across the whole early game', () => {
+  for (let lvl = 1; lvl <= 120; lvl++) {
+    const g = generateLevel(lvl, balance);
+    assert.ok(!Array.from(g.grid).includes(EMPTY), `level ${lvl} has holes`);
   }
 });
 
@@ -197,8 +237,6 @@ test('findHint returns -1 on an empty board, never mutates, and respects alive',
   assert.ok(idx >= 0);
   const head = g.pieces[idx].cells[0];
   assert.ok(rayClear(g.grid, g.cols, g.rows, idx, head % g.cols, (head / g.cols) | 0, g.pieces[idx].dir));
-  // alive mask: kill every piece except a blocked one → no free piece → -1...
-  // simpler: alive only the hinted piece → hint must return it
   const alive = new Uint8Array(g.pieces.length);
   alive[idx] = 1;
   assert.equal(findHint(g.pieces, g.grid, g.cols, g.rows, alive), idx);

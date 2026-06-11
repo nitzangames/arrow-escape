@@ -1,11 +1,15 @@
 // Pure board generation and analysis. No DOM — runs under Node for tests.
 //
 // A piece is a snake: an ordered list of cell indices (head first) forming a
-// 4-connected path, plus the head's pointing direction (away from the body).
-// The grid maps each cell to its piece index (EMPTY = -1). Index i = r*cols+c;
-// directions 0=up 1=right 2=down 3=left.
+// 4-connected path, plus the head's pointing direction (away from the body,
+// colinear with the path's end segment). The grid maps each cell to its
+// piece index, EMPTY (-1), or WALL (-2: outside the playable mask — blocks
+// rays like a piece, never holds one). Generated boards are FULL: every open
+// cell belongs to exactly one piece. Index i = r*cols+c; directions
+// 0=up 1=right 2=down 3=left.
 
 export const EMPTY = -1;
+export const WALL = -2;
 export const DIRS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
 export function mulberry32(seed) {
@@ -24,14 +28,14 @@ export function levelSeed(level, candidate) {
 }
 
 export function rampFor(level, balance) {
-  for (const [maxLevel, cols, rows, minPieces, maxPieces, minLen, maxLen] of balance.ramp) {
-    if (level <= maxLevel) return { cols, rows, minPieces, maxPieces, minLen, maxLen };
+  for (const [maxLevel, cols, rows, minLen, maxLen, longBias] of balance.ramp) {
+    if (level <= maxLevel) return { cols, rows, minLen, maxLen, longBias };
   }
 }
 
 // True if the straight ray from a head (exclusive) to the edge is free of
-// other pieces. selfId cells never block: a piece's own body can't obstruct
-// its slide (the body vacates along the same track).
+// other pieces and walls. selfId cells never block: a piece's own body can't
+// obstruct its slide (the body vacates along the same track).
 export function rayClear(grid, cols, rows, selfId, c, r, dir) {
   const dx = DIRS[dir][0], dy = DIRS[dir][1];
   let x = c + dx, y = r + dy;
@@ -43,61 +47,104 @@ export function rayClear(grid, cols, rows, selfId, c, r, dir) {
   return true;
 }
 
-// True if (x,y) lies on the open ray from (hc,hr) in direction dir.
-function onRay(hc, hr, dir, x, y) {
-  const dx = DIRS[dir][0], dy = DIRS[dir][1];
-  if (dx === 0) return x === hc && Math.sign(y - hr) === dy;
-  return y === hr && Math.sign(x - hc) === dx;
+// Target length skewed toward maxLen: t = bias + (1-bias)·u, so bias 0 is
+// uniform and bias 1 always picks maxLen. Walks that get boxed in fall short
+// of the target, so actual lengths spread below it.
+function sampleLen(rng, minLen, maxLen, longBias) {
+  const t = longBias + (1 - longBias) * rng();
+  return Math.min(maxLen, minLen + ((t * (maxLen - minLen + 1)) | 0));
 }
 
-// Reverse construction with snakes: each piece is placed only where its head's
-// exit ray is clear of all earlier pieces, so removing pieces in reverse
-// placement order always clears the board (the latest remaining piece is
-// always free). The body grows backward from the head — first cell directly
-// behind the head, later cells may bend — and never steps onto occupied
-// cells, onto itself, or onto the head's exit ray.
-export function buildBoard(rng, cols, rows, targetPieces, minLen, maxLen) {
-  const grid = new Int16Array(cols * rows).fill(EMPTY);
-  const pieces = [];
-  let guard = targetPieces * 80;
-  while (pieces.length < targetPieces && guard-- > 0) {
-    const hc = (rng() * cols) | 0;
-    const hr = (rng() * rows) | 0;
-    if (grid[hr * cols + hc] !== EMPTY) continue;
+// If `startEnd`, the head is cells[0] (the walk's seed); otherwise the far
+// end. The head's direction is forced: it continues the path's end segment.
+// Returns the oriented candidate piece, or null if its exit ray is blocked.
+function headConfig(grid, cols, rows, id, cells, startEnd) {
+  const ordered = startEnd ? cells.slice() : cells.slice().reverse();
+  const head = ordered[0], behind = ordered[1];
+  const hc = head % cols, hr = (head / cols) | 0;
+  const dc = hc - (behind % cols), dr = hr - ((behind / cols) | 0);
+  const dir = dc === 1 ? 1 : dc === -1 ? 3 : dr === 1 ? 2 : 0;
+  return rayClear(grid, cols, rows, id, hc, hr, dir) ? { cells: ordered, dir } : null;
+}
+
+// Grow one snake covering `start` (the lowest-index empty cell): random-walk
+// through empty cells toward the sampled target length, then pick a head end
+// with a clear exit ray. If neither end works, shrink the walk and retry;
+// a length-1 piece may point in any clear direction. Commits the piece into
+// grid/pieces and returns true, or returns false if even a single can't
+// escape (board wedged — caller restarts).
+function placeSnake(rng, grid, cols, rows, pieces, start, minLen, maxLen, longBias) {
+  const target = sampleLen(rng, minLen, maxLen, longBias);
+  const cells = [start];
+  let cur = start;
+  while (cells.length < target) {
     const d0 = (rng() * 4) | 0;
+    let next = -1;
     for (let k = 0; k < 4; k++) {
-      const dir = (d0 + k) % 4;
-      if (!rayClear(grid, cols, rows, pieces.length, hc, hr, dir)) continue;
-      const targetLen = minLen + ((rng() * (maxLen - minLen + 1)) | 0);
-      const cells = [hr * cols + hc];
-      let bc = hc, br = hr;
-      let walkDir = (dir + 2) % 4; // first body cell sits directly behind the head
-      for (let len = 1; len < targetLen; len++) {
-        const turn = rng() < 0.5 ? 1 : 3;
-        const tries = len === 1
-          ? [walkDir]                                  // behind the head is mandatory
-          : [walkDir, (walkDir + turn) % 4, (walkDir + 4 - turn) % 4];
-        let moved = false;
-        for (const wd of tries) {
-          const nx = bc + DIRS[wd][0], ny = br + DIRS[wd][1];
-          if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
-          const ni = ny * cols + nx;
-          if (grid[ni] !== EMPTY || cells.includes(ni) || onRay(hc, hr, dir, nx, ny)) continue;
-          cells.push(ni);
-          bc = nx; br = ny; walkDir = wd;
-          moved = true;
-          break;
-        }
-        if (!moved) break;
-      }
-      if (cells.length < minLen) continue; // couldn't grow enough — try another dir
-      const id = pieces.length;
-      for (const ci of cells) grid[ci] = id;
-      pieces.push({ cells, dir });
+      const wd = (d0 + k) % 4;
+      const nx = (cur % cols) + DIRS[wd][0];
+      const ny = ((cur / cols) | 0) + DIRS[wd][1];
+      if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+      const ni = ny * cols + nx;
+      if (grid[ni] !== EMPTY || cells.includes(ni)) continue;
+      next = ni;
       break;
     }
+    if (next < 0) break; // boxed in — settle for the length we got
+    cells.push(next);
+    cur = next;
   }
-  return { pieces, grid };
+  const id = pieces.length;
+  while (cells.length > 1) {
+    const far = headConfig(grid, cols, rows, id, cells, false);
+    const seed = headConfig(grid, cols, rows, id, cells, true);
+    const pick = far && seed ? (rng() < 0.5 ? far : seed) : (far || seed);
+    if (pick) {
+      for (const ci of pick.cells) grid[ci] = id;
+      pieces.push(pick);
+      return true;
+    }
+    cells.pop(); // both ends blocked — try a shorter snake
+  }
+  const d0 = (rng() * 4) | 0;
+  for (let k = 0; k < 4; k++) {
+    const dir = (d0 + k) % 4;
+    if (rayClear(grid, cols, rows, id, start % cols, (start / cols) | 0, dir)) {
+      grid[start] = id;
+      pieces.push({ cells: [start], dir });
+      return true;
+    }
+  }
+  return false;
+}
+
+// Reverse construction with full fill: a piece may only be placed where its
+// head's exit ray is clear of already-placed pieces and walls — rays over
+// still-empty cells are fine, those pieces are placed later and removed
+// earlier — so removing pieces in reverse placement order always clears the
+// board. Growing each snake from the lowest-index empty cell guarantees no
+// cell is stranded. A wedged packing restarts (bounded, same rng stream —
+// still deterministic); returns null if every attempt fails, and callers
+// must skip the candidate. `mask` (optional Uint8Array, 1 = open) carves the
+// playable shape; v1 always passes no mask (all-open rectangle).
+export function buildBoard(rng, cols, rows, minLen, maxLen, longBias, mask) {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const grid = new Int16Array(cols * rows).fill(EMPTY);
+    if (mask) {
+      for (let i = 0; i < grid.length; i++) if (!mask[i]) grid[i] = WALL;
+    }
+    const pieces = [];
+    let wedged = false;
+    for (let i = 0; i < grid.length; i++) {
+      if (grid[i] !== EMPTY) continue;
+      if (!placeSnake(rng, grid, cols, rows, pieces, i, minLen, maxLen, longBias)) {
+        wedged = true;
+        break;
+      }
+    }
+    if (!wedged) return { pieces, grid };
+  }
+  return null;
 }
 
 // Solve by waves: repeatedly remove every currently-free piece at once.
@@ -169,15 +216,16 @@ export function pickIndexForLevel(level, scores, balance) {
 }
 
 // Level N: generate `balance.candidates` boards from derived seeds, score
-// each, pick by percentile.
+// each, pick by percentile. Candidates whose packing failed (null — never
+// observed in practice, see tests) are simply left out of the pool.
 export function generateLevel(level, balance) {
-  const { cols, rows, minPieces, maxPieces, minLen, maxLen } = rampFor(level, balance);
+  const { cols, rows, minLen, maxLen, longBias } = rampFor(level, balance);
   const boards = [];
   const scores = [];
   for (let k = 0; k < balance.candidates; k++) {
     const rng = mulberry32(levelSeed(level, k));
-    const targetPieces = minPieces + ((rng() * (maxPieces - minPieces + 1)) | 0);
-    const built = buildBoard(rng, cols, rows, targetPieces, minLen, maxLen);
+    const built = buildBoard(rng, cols, rows, minLen, maxLen, longBias);
+    if (!built) continue;
     boards.push(built);
     scores.push(scoreBoard(built.pieces, built.grid, cols, rows, balance.scoreWeights));
   }

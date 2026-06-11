@@ -35,13 +35,14 @@ function runTicks(gd, seconds) {
   for (let t = 0; t < seconds; t += dt) tick(gd, balance, dt);
 }
 
-test('startLevel produces a playable snake board', () => {
+test('startLevel produces a playable, completely filled snake board', () => {
   const gd = allocGameData(balance);
   gd.level = 3;
   startLevel(gd, balance);
   assert.equal(gd.screen, 'game');
   assert.ok(gd.cols > 0 && gd.rows > 0);
   assert.equal(gd.grid.length, gd.cols * gd.rows);
+  assert.ok(!Array.from(gd.grid).includes(EMPTY), 'board has empty cells');
   assert.ok(gd.pieces.length > 0);
   assert.equal(gd.remaining, gd.pieces.length);
   assert.equal(gd.alive.length, gd.pieces.length);
