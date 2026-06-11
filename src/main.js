@@ -3,6 +3,7 @@ import { allocGameData } from './gameData.js';
 import { startLevel, nextLevel, tapCell, tick, useHint, refillHearts } from './logic.js';
 import { initSprites, render, hitTest } from './render.js';
 import { findHint } from './generator.js';
+import { initAudio, sfx, suspendAudio, resumeAudio } from './audio.js';
 
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
@@ -34,17 +35,27 @@ let canvasRect = canvas.getBoundingClientRect();
 function refreshRect() { canvasRect = canvas.getBoundingClientRect(); }
 window.addEventListener('resize', refreshRect);
 
+// FIX 1: guard against boot race — pointerdown is live while boot() still awaits save load
+let booted = false;
+
 canvas.addEventListener('pointerdown', (e) => {
+  if (!booted) return;
+  initAudio();
   const x = (e.clientX - canvasRect.left) * (canvas.width / canvasRect.width);
   const y = (e.clientY - canvasRect.top) * (canvas.height / canvasRect.height);
   const hit = hitTest(gd, x, y);
   if (!hit) return;
   gd.dirty = true;
   if (hit.type === 'button') {
+    sfx(gd, 'tap');
     onButton(hit.id);
   } else {
     const result = tapCell(gd, balance, hit.c, hit.r);
-    if (result === 'bump' && window.PlaySDK && PlaySDK.haptic) PlaySDK.haptic('medium');
+    if (result === 'fly') sfx(gd, 'whoosh');
+    else if (result === 'bump') {
+      sfx(gd, 'bump');
+      if (window.PlaySDK && PlaySDK.haptic) PlaySDK.haptic('medium');
+    }
   }
 });
 
@@ -70,7 +81,10 @@ function frame(t) {
   const dt = Math.min((t - lastT) / 1000, 1 / 30);
   lastT = t;
   tick(gd, balance, dt);
-  if (gd.screen === 'clear' && prevScreen !== 'clear') saveProgress(); // gold was just awarded
+  if (gd.screen === 'clear' && prevScreen !== 'clear') {
+    sfx(gd, 'fanfare');
+    saveProgress();
+  }
   prevScreen = gd.screen;
   if (!gd.dirty) return; // static screens render only when something changed
   render(ctx, gd, balance);
@@ -80,8 +94,11 @@ function frame(t) {
 // --- pause/resume (battery): stop the loop and resume cleanly ---
 function pauseGame() {
   cancelAnimationFrame(rafId);
+  suspendAudio();
 }
 function resumeGame() {
+  cancelAnimationFrame(rafId); // idempotent: SDK may fire onResume twice
+  resumeAudio();
   lastT = performance.now();
   rafId = requestAnimationFrame(frame);
 }
@@ -106,6 +123,8 @@ async function boot() {
       // corrupted save → keep defaults
     }
   }
+  // FIX 1: mark boot complete so pointerdown handler becomes active
+  booted = true;
 
   initSprites();
   refreshRect();
