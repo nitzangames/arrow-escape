@@ -22,37 +22,67 @@ function roundRect(x, y, w, h, r) {
   c.closePath();
 }
 
-function tile(x, y, s, dir, color, glyph) {
-  c.fillStyle = color;
-  roundRect(x, y, s, s, s * 0.19);
-  c.fill();
-  c.save();
-  c.translate(x + s / 2, y + s / 2);
-  c.rotate(dir * Math.PI / 2);
-  const u = s / 150;
-  c.fillStyle = glyph;
+// background
+c.fillStyle = '#f4f1ea';
+c.fillRect(0, 0, 512, 512);
+
+// mini board: 4x3 virtual grid of snake pieces (same visual language as render.js)
+const CELL = 88, X0 = 80, Y0 = 56, COLS = 4, ROWS = 3;
+const cx = (q) => X0 + (q + 0.5) * CELL;
+const cy = (r) => Y0 + (r + 0.5) * CELL;
+
+// subtle cell grid on a board panel
+c.fillStyle = '#ece8df';
+roundRect(X0 - 14, Y0 - 14, COLS * CELL + 28, ROWS * CELL + 28, 20);
+c.fill();
+c.strokeStyle = '#dcd7cb';
+c.lineWidth = 2;
+for (let r = 0; r <= ROWS; r++) {
   c.beginPath();
-  c.moveTo(0, -40 * u); c.lineTo(30 * u, 0); c.lineTo(12 * u, 0); c.lineTo(12 * u, 38 * u);
-  c.lineTo(-12 * u, 38 * u); c.lineTo(-12 * u, 0); c.lineTo(-30 * u, 0);
+  c.moveTo(X0, Y0 + r * CELL);
+  c.lineTo(X0 + COLS * CELL, Y0 + r * CELL);
+  c.stroke();
+}
+for (let q = 0; q <= COLS; q++) {
+  c.beginPath();
+  c.moveTo(X0 + q * CELL, Y0);
+  c.lineTo(X0 + q * CELL, Y0 + ROWS * CELL);
+  c.stroke();
+}
+
+// snake: cells [[col,row], ...] head first, stroked tail -> head
+function snake(cells, dir, color) {
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+  c.lineWidth = CELL * 0.72;
+  c.strokeStyle = color;
+  c.beginPath();
+  for (let j = cells.length - 1; j >= 0; j--) {
+    const x = cx(cells[j][0]), y = cy(cells[j][1]);
+    if (j === cells.length - 1) c.moveTo(x, y);
+    else c.lineTo(x, y);
+  }
+  if (cells.length === 1) c.lineTo(cx(cells[0][0]) + 0.01, cy(cells[0][1]));
+  c.stroke();
+  // arrowhead glyph on the head
+  const u = CELL / 150;
+  c.save();
+  c.translate(cx(cells[0][0]), cy(cells[0][1]));
+  c.rotate(dir * Math.PI / 2);
+  c.fillStyle = '#f4f1ea';
+  c.beginPath();
+  c.moveTo(0, -32 * u);
+  c.lineTo(24 * u, 14 * u);
+  c.lineTo(0, 4 * u);
+  c.lineTo(-24 * u, 14 * u);
   c.closePath();
   c.fill();
   c.restore();
 }
 
-// background
-c.fillStyle = '#f4f1ea';
-c.fillRect(0, 0, 512, 512);
-
-// mini board of tiles, one accent
-const S = 96, GAP = 14, X0 = 80, Y0 = 64;
-const dirs = [[1, 0, 2], [3, 1, 0], [2, 0, 1]];
-for (let r = 0; r < 3; r++) {
-  for (let q = 0; q < 3; q++) {
-    const accent = r === 1 && q === 1;
-    tile(X0 + q * (S + GAP), Y0 + r * (S + GAP), S, dirs[r][q],
-      accent ? '#e2574c' : '#2b2b2e', '#f4f1ea');
-  }
-}
+snake([[3, 0], [3, 1], [2, 1]], 0, '#2b2b2e');            // L-shaped 3-cell, up
+snake([[1, 0], [0, 0]], 1, '#e2574c');                    // straight 2-cell, right, accent
+snake([[0, 1], [1, 1], [1, 2], [2, 2]], 3, '#2b2b2e');    // S-shaped 4-cell, left
 
 // title — must be readable at ~200px wide
 c.fillStyle = '#2b2b2e';
