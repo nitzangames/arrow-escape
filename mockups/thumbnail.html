@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Arrow Escape — thumbnail generator</title>
+<style>body { background: #333; display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 24px; font-family: system-ui; color: #eee; }</style>
+</head>
+<body>
+<canvas id="cv" width="512" height="512"></canvas>
+<a id="dl" download="thumbnail.png" style="color:#9cf; font-size:18px;">Download thumbnail.png</a>
+<script>
+const cv = document.getElementById('cv');
+const c = cv.getContext('2d');
+
+function roundRect(x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r);
+  c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r);
+  c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+
+function tile(x, y, s, dir, color, glyph) {
+  c.fillStyle = color;
+  roundRect(x, y, s, s, s * 0.19);
+  c.fill();
+  c.save();
+  c.translate(x + s / 2, y + s / 2);
+  c.rotate(dir * Math.PI / 2);
+  const u = s / 150;
+  c.fillStyle = glyph;
+  c.beginPath();
+  c.moveTo(0, -40 * u); c.lineTo(30 * u, 0); c.lineTo(12 * u, 0); c.lineTo(12 * u, 38 * u);
+  c.lineTo(-12 * u, 38 * u); c.lineTo(-12 * u, 0); c.lineTo(-30 * u, 0);
+  c.closePath();
+  c.fill();
+  c.restore();
+}
+
+// background
+c.fillStyle = '#f4f1ea';
+c.fillRect(0, 0, 512, 512);
+
+// mini board of tiles, one accent
+const S = 96, GAP = 14, X0 = 80, Y0 = 64;
+const dirs = [[1, 0, 2], [3, 1, 0], [2, 0, 1]];
+for (let r = 0; r < 3; r++) {
+  for (let q = 0; q < 3; q++) {
+    const accent = r === 1 && q === 1;
+    tile(X0 + q * (S + GAP), Y0 + r * (S + GAP), S, dirs[r][q],
+      accent ? '#e2574c' : '#2b2b2e', '#f4f1ea');
+  }
+}
+
+// title — must be readable at ~200px wide
+c.fillStyle = '#2b2b2e';
+c.textAlign = 'center';
+c.font = '800 64px -apple-system, system-ui, sans-serif';
+c.fillText('ARROW', 256, 440);
+c.fillText('ESCAPE', 256, 500);
+
+document.getElementById('dl').href = cv.toDataURL('image/png');
+</script>
+</body>
+</html>
