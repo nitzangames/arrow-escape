@@ -216,8 +216,8 @@ export function pickIndexForLevel(level, scores, balance) {
 }
 
 // Level N: generate `balance.candidates` boards from derived seeds, score
-// each, pick by percentile. Candidates whose packing failed (null — never
-// observed in practice, see tests) are simply left out of the pool.
+// each, pick by percentile. Candidates whose packing failed (null — rare,
+// deepest brackets only; skipped deterministically) are simply left out of the pool.
 export function generateLevel(level, balance) {
   const { cols, rows, minLen, maxLen, longBias } = rampFor(level, balance);
   const boards = [];

@@ -137,4 +137,4 @@ Gameplay/UI verified manually in the browser via local dev server (port 8092) + 
 
 ## Out of scope for v1
 
-Custom board shapes (heart, diamond, letters — the mask plumbing ships in v1 but only the rectangle mask is used), daily challenges, streaks (freezers/fixers), shop/NBucks integration, level select, alternate themes, leaderboards, undo.
+Custom board shapes (heart, diamond, letters — the mask plumbing ships in v1 but only the rectangle mask is used; the future shapes task must also teach `tapCell` in logic.js to ignore `WALL` cells, which currently only checks `EMPTY`), daily challenges, streaks (freezers/fixers), shop/NBucks integration, level select, alternate themes, leaderboards, undo.

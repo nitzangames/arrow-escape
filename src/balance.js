@@ -1,4 +1,4 @@
-export const VERSION = 'v0.1.17';
+export const VERSION = 'v0.1.18';
 
 export const balance = {
   canvasW: 1080,
@@ -8,6 +8,7 @@ export const balance = {
   // any of them after launch reshuffles every player's boards.
   // Level ramp brackets: [maxLevel, cols, rows, minLen, maxLen, longBias]
   // Boards are always 100% filled; piece count emerges from the length mix.
+  // minLen is a sampling floor, not a guarantee — boxed-in walks still yield shorter pieces.
   ramp: [
     [10, 4, 5, 1, 4, 0],
     [30, 5, 7, 1, 5, 0.2],

@@ -18,7 +18,7 @@
 - **Grid:** `Int16Array(cols*rows)`, value = piece index, `EMPTY` (−1), or `WALL` (−2). WALL cells block rays exactly like pieces, never hold a piece, and are preserved by wave simulation. In v1 every generated board has zero WALLs (all-open rectangle), but `buildBoard` accepts an optional mask and tests cover it.
 - **Full fill:** after generation, no cell is `EMPTY` — every open cell belongs to exactly one piece.
 - **Long bias:** target length `len = min(maxLen, minLen + floor(t·(maxLen−minLen+1)))` where `t = bias + (1−bias)·rng()`. Bias 0 = uniform; bias 1 = always maxLen. Actual lengths can fall below target when the walk gets boxed in — length 1 is the always-legal fallback that makes perfect packing reliable.
-- **Wedge & restart:** a placement fails only if even a length-1 piece at the seed cell has all four rays blocked by placed pieces/walls. `buildBoard` then restarts the whole board (fresh grid, same continuing rng stream), up to 50 attempts, and returns `null` if all fail. `generateLevel` skips null candidates (tests confirm this never actually happens across the ramp).
+- **Wedge & restart:** a placement fails only if even a length-1 piece at the seed cell has all four rays blocked by placed pieces/walls. `buildBoard` then restarts the whole board (fresh grid, same continuing rng stream), up to 200 attempts, and returns `null` if all fail. `generateLevel` skips null candidates (tests confirm this never actually happens across the ramp).
 
 ---
 
@@ -432,7 +432,7 @@ function placeSnake(rng, grid, cols, rows, pieces, start, minLen, maxLen, longBi
 // must skip the candidate. `mask` (optional Uint8Array, 1 = open) carves the
 // playable shape; v1 always passes no mask (all-open rectangle).
 export function buildBoard(rng, cols, rows, minLen, maxLen, longBias, mask) {
-  for (let attempt = 0; attempt < 50; attempt++) {
+  for (let attempt = 0; attempt < 200; attempt++) {
     const grid = new Int16Array(cols * rows).fill(EMPTY);
     if (mask) {
       for (let i = 0; i < grid.length; i++) if (!mask[i]) grid[i] = WALL;
@@ -596,7 +596,7 @@ test('startLevel produces a playable, completely filled snake board', () => {
 
 Run: `npm test`
 
-If the breather-bracket test fails: full boards compress score variance between candidates, so investigate the score distribution per bracket (print candidate scores for a few levels) and adjust `percentileMin`/`percentileMax` or `scoreWeights` in `balance.js` — do NOT weaken the assertion. If `generation never wedges` fails: raise the restart cap in `buildBoard` (50 → 200) and check `placeSnake`'s shrink loop actually pops down to 1.
+If the breather-bracket test fails: full boards compress score variance between candidates, so investigate the score distribution per bracket (print candidate scores for a few levels) and adjust `percentileMin`/`percentileMax` or `scoreWeights` in `balance.js` — do NOT weaken the assertion. If `generation never wedges` fails: raise the restart cap in `buildBoard` (already raised to 200 during implementation) and check `placeSnake`'s shrink loop actually pops down to 1.
 
 - [ ] **Step 7: Sanity-print a board** (eyeball that packing looks like the reference game):
 
