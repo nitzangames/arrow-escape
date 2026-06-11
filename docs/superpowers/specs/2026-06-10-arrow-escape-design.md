@@ -1,6 +1,6 @@
 # Arrow Escape — Design Spec (GDD)
 
-Date: 2026-06-10 · rev 2 (2026-06-10): pieces are multi-cell snakes, matching the reference game
+Date: 2026-06-10 · rev 3 (2026-06-11): full-fill boards — every cell is covered by a snake (lengths 1–7); grid is mask-ready for future custom shapes
 Status: approved design
 Platform: nitzan.games (1080×1920 portrait canvas, sandboxed iframe, PlaySDK)
 Slug: `arrow-escape` · Title: **Arrow Escape**
@@ -16,7 +16,8 @@ Slug: `arrow-escape` · Title: **Arrow Escape**
 
 ### Rules
 
-- A rectangular grid board; every **piece is a snake**: an ordered path of 1–5 connected cells with bends, ending in an arrowhead that points away from the body (like the reference game).
+- A rectangular grid board, **completely filled**: every cell belongs to exactly one snake. A **piece is a snake**: an ordered path of 1–7 connected cells with bends, ending in an arrowhead that points away from the body, colinear with the path's end segment (like the reference game). Length-1 pieces (dots) are allowed as packing filler.
+- The grid is **mask-ready**: cells outside the playable shape are `WALL` and block rays exactly like pieces do. In v1 the mask is an all-open rectangle; future versions can supply heart/diamond/letter masks with no generator changes.
 - **Tap any cell of a piece:** if the straight ray of cells from the **head** to the board edge (in the arrowhead's direction) is free of *other* pieces, the whole snake slides out — the head travels straight along the ray and the body follows the head's track (train-style), straightening as it exits.
 - If another piece sits on that ray, the tapped piece **bumps**: it nudges toward the blocker and bounces back, and the player loses **1 of 3 hearts** (screen shake + bump sound + heart flash on the lost heart).
 - Clear all pieces → **level clear**. Lose all 3 hearts → **level failed**.
@@ -25,23 +26,26 @@ Slug: `arrow-escape` · Title: **Arrow Escape**
 
 ### Difficulty ramp
 
-Board size, piece count, and snake length scale with level number `N` (all values live in `balance.js`):
+Board size and snake length mix scale with level number `N` (all values live in `balance.js`). Piece count is no longer a tuning knob — it emerges from packing the full board with the bracket's length mix:
 
-| Levels   | Grid  | Pieces | Lengths |
-|----------|-------|--------|---------|
-| 1–10     | 4×5   | 4–6    | 1–3     |
-| 11–30    | 5×7   | 6–9    | 1–4     |
-| 31–60    | 6×8   | 8–12   | 2–4     |
-| 61–120   | 7×9   | 10–15  | 2–5     |
-| 121–300  | 7×10  | 12–17  | 2–5     |
-| 301+     | 8×11  | 15–21  | 2–5     |
+| Levels   | Grid  | Lengths | Long bias |
+|----------|-------|---------|-----------|
+| 1–10     | 4×5   | 1–4     | 0.0       |
+| 11–30    | 5×7   | 1–5     | 0.2       |
+| 31–60    | 6×8   | 1–5     | 0.35      |
+| 61–120   | 7×9   | 1–6     | 0.5       |
+| 121–300  | 7×10  | 1–7     | 0.6       |
+| 301+     | 8×11  | 1–7     | 0.7       |
+
+**Long bias** skews target-length sampling toward the top of the range (0 = uniform, 1 = always maxLen), so late boards read as dense tangles of long winding snakes while early boards stay short and legible. Actual lengths can fall below target when packing constraints cut a walk short; length 1 is always a legal fallback, which is what makes perfect packing reliable.
 
 A **sawtooth** keeps pacing relaxing: every 5th level is a "breather" board (the easiest of its candidate pool), mirroring the reference game's hard/easy alternation.
 
 ### Level generation (in `generator.js`)
 
 - **Seeded RNG:** mulberry32. Seed derived deterministically from level number → same level N is the same board for every player, forever. Failing and retrying a level replays the identical board.
-- **Reverse construction guarantees solvability:** start from an empty board; place snakes one at a time — pick a head cell + direction whose exit ray is clear of all already-placed pieces *at placement time*, then random-walk the body backward from the head (first body cell directly behind the head, later cells may bend; the body never sits on its own exit ray). The reverse of placement order is then a valid solution.
+- **Reverse construction guarantees solvability:** place snakes one at a time into an initially empty board; a piece may only be placed where its head's exit ray is clear of all *already-placed* pieces (and walls) at placement time. Rays over still-empty cells are fine: those cells get later-placed pieces, which are removed *earlier* in forward play. The reverse of placement order is then a valid solution.
+- **Full-fill packing:** each new snake grows from the **lowest-index empty cell** (guaranteeing no cell is ever stranded) and random-walks through empty cells toward a target length sampled from the bracket's length mix. The head must be a path end whose forced direction (colinear with the end segment; any of 4 directions for singles) has a clear ray. If neither end qualifies, the walk shrinks and retries; if the board wedges, the whole board restarts within the same seeded RNG stream (bounded restarts — deterministic). A candidate seed that still fails is scored unusable and never picked; tests sweep hundreds of levels to confirm this stays theoretical.
 - **Candidate scoring smooths the curve:** for level N, generate 8 candidate boards (seeds `hash(N, 0..7)`), score each, and pick by *percentile within the candidate pool*: breather levels take the easiest candidate; normal levels ramp from the 30th to the 90th percentile across their bracket. Distribution-relative selection auto-calibrates to whatever scores each board size can produce (an absolute target curve was tried first and degenerated to easiest-of-8 for mid-game brackets).
 
 **Difficulty score** of a board (weights in `balance.js`):
@@ -116,7 +120,7 @@ ArrowEscape/
 ### Error handling
 
 - Save load failure / empty → defaults (level 1, 60 gold, sound on).
-- Generator guard: if reverse construction can't place the full target arrow count (rare on dense boards), it ships the board with however many arrows fit — still solvable by construction; the candidate scorer naturally deprioritizes underfilled boards.
+- Generator guard: full coverage is a hard invariant — a board that can't be packed restarts (bounded, deterministic); a candidate seed that exhausts its restarts is excluded from the candidate pool rather than shipped underfilled.
 - Hint with insufficient gold → button disabled state (greyed, shows cost).
 
 ### Testing
@@ -124,12 +128,13 @@ ArrowEscape/
 `tests/generator.test.js` (run with `node --test`):
 
 1. **Solvability** — for many levels across the ramp, simulate wave-removal until empty; assert every generated board fully clears.
-2. **Determinism** — same level number twice → identical board layout.
-3. **Ramp sanity** — average difficulty score over levels 1–300 is monotonically increasing per bracket; every 5th level scores below its neighbors.
-4. **Hint validity** — hint always returns a currently-free arrow on any reachable state.
+2. **Full coverage** — every cell of every generated board belongs to exactly one snake; all lengths within the bracket's range.
+3. **Determinism** — same level number twice → identical board layout.
+4. **Ramp sanity** — average difficulty score over levels 1–300 is monotonically increasing per bracket; every 5th level scores below its neighbors.
+5. **Hint validity** — hint always returns a currently-free arrow on any reachable state.
 
 Gameplay/UI verified manually in the browser via local dev server (port 8092) + on-device.
 
 ## Out of scope for v1
 
-Daily challenges, streaks (freezers/fixers), shop/NBucks integration, level select, alternate themes, leaderboards, undo.
+Custom board shapes (heart, diamond, letters — the mask plumbing ships in v1 but only the rectangle mask is used), daily challenges, streaks (freezers/fixers), shop/NBucks integration, level select, alternate themes, leaderboards, undo.
