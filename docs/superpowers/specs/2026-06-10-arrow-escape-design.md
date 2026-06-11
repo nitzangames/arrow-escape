@@ -1,6 +1,6 @@
 # Arrow Escape — Design Spec (GDD)
 
-Date: 2026-06-10 · rev 3 (2026-06-11): full-fill boards — every cell is covered by a snake (lengths 1–7); grid is mask-ready for future custom shapes
+Date: 2026-06-10 · rev 4 (2026-06-11): custom board shapes (heart, diamond, plus, donut, hourglass, triangle) every 3rd level from level 10; boards 2× bigger (5×7 → 10×14 by level 20)
 Status: approved design
 Platform: nitzan.games (1080×1920 portrait canvas, sandboxed iframe, PlaySDK)
 Slug: `arrow-escape` · Title: **Arrow Escape**
@@ -16,8 +16,9 @@ Slug: `arrow-escape` · Title: **Arrow Escape**
 
 ### Rules
 
-- A rectangular grid board, **completely filled**: every cell belongs to exactly one snake. A **piece is a snake**: an ordered path of 1–7 connected cells with bends, ending in an arrowhead that points away from the body, colinear with the path's end segment (like the reference game). Length-1 pieces (dots) are allowed as packing filler.
-- The grid is **mask-ready**: cells outside the playable shape are `WALL` and block rays exactly like pieces do. In v1 the mask is an all-open rectangle; future versions can supply heart/diamond/letter masks with no generator changes.
+- A grid board, **completely filled**: every playable cell belongs to exactly one snake. A **piece is a snake**: an ordered path of 1–7 connected cells with bends, ending in an arrowhead that points away from the body, colinear with the path's end segment (like the reference game). Length-1 pieces (dots) are allowed as packing filler.
+- **Shaped boards:** most levels are rectangles, but from level 10 every 3rd level (10, 13, 16, …) uses a shaped mask, cycling deterministically through six shapes: heart → diamond → plus → donut → hourglass → triangle. Cells outside the shape are `WALL`: they block rays exactly like pieces, hold no pieces, take no taps, and draw nothing — the board silhouette *is* the shape. Shaped boards have fewer playable cells than their rectangle peers, which makes them a slightly lighter change of pace.
+- **Shape masks are geometric:** each shape is an implicit inside/outside formula sampled at cell centers over the formula's bounding box (in `shapes.js`), so the same six formulas produce clean shapes at every board size in the ramp — no hand-authored grids.
 - **Tap any cell of a piece:** if the straight ray of cells from the **head** to the board edge (in the arrowhead's direction) is free of *other* pieces, the whole snake slides out — the head travels straight along the ray and the body follows the head's track (train-style), straightening as it exits.
 - If another piece sits on that ray, the tapped piece **bumps**: it nudges toward the blocker and bounces back, and the player loses **1 of 3 hearts** (screen shake + bump sound + heart flash on the lost heart).
 - Clear all pieces → **level clear**. Lose all 3 hearts → **level failed**.
@@ -28,14 +29,17 @@ Slug: `arrow-escape` · Title: **Arrow Escape**
 
 Board size and snake length mix scale with level number `N` (all values live in `balance.js`). Piece count is no longer a tuning knob — it emerges from packing the full board with the bracket's length mix:
 
-| Levels   | Grid  | Lengths | Long bias |
-|----------|-------|---------|-----------|
-| 1–10     | 4×5   | 1–4     | 0.0       |
-| 11–30    | 5×7   | 1–5     | 0.2       |
-| 31–60    | 6×8   | 1–5     | 0.35      |
-| 61–120   | 7×9   | 1–6     | 0.5       |
-| 121–300  | 7×10  | 1–7     | 0.6       |
-| 301+     | 8×11  | 1–7     | 0.7       |
+| Levels   | Grid   | Lengths | Long bias |
+|----------|--------|---------|-----------|
+| 1–3      | 5×7    | 1–4     | 0.0       |
+| 4–6      | 6×9    | 1–5     | 0.2       |
+| 7–10     | 7×10   | 1–5     | 0.3       |
+| 11–14    | 8×12   | 1–6     | 0.4       |
+| 15–19    | 9×13   | 1–6     | 0.5       |
+| 20–60    | 10×14  | 1–7     | 0.6       |
+| 61+      | 10×14  | 1–7     | 0.7       |
+
+The board reaches full size (10×14, 140 cells) by level 20 and stays there — early 5×7 boards were too easy, so growth is front-loaded. At 10×14 the cell size drops to ~83 canvas px (from 150 on 5×7), still comfortably tappable.
 
 **Long bias** skews target-length sampling toward the top of the range (0 = uniform, 1 = always maxLen), so late boards read as dense tangles of long winding snakes while early boards stay short and legible. Actual lengths can fall below target when packing constraints cut a walk short; length 1 is always a legal fallback, which is what makes perfect packing reliable.
 
@@ -46,6 +50,7 @@ A **sawtooth** keeps pacing relaxing: every 5th level is a "breather" board (the
 - **Seeded RNG:** mulberry32. Seed derived deterministically from level number → same level N is the same board for every player, forever. Failing and retrying a level replays the identical board.
 - **Reverse construction guarantees solvability:** place snakes one at a time into an initially empty board; a piece may only be placed where its head's exit ray is clear of all *already-placed* pieces (and walls) at placement time. Rays over still-empty cells are fine: those cells get later-placed pieces, which are removed *earlier* in forward play. The reverse of placement order is then a valid solution.
 - **Full-fill packing:** each new snake grows from the **lowest-index empty cell** (guaranteeing no cell is ever stranded) and random-walks through empty cells toward a target length sampled from the bracket's length mix. The head must be a path end whose forced direction (colinear with the end segment; any of 4 directions for singles) has a clear ray. If neither end qualifies, the walk shrinks and retries; if the board wedges, the whole board restarts within the same seeded RNG stream (bounded restarts — deterministic). A candidate seed that still fails is scored unusable and never picked; tests sweep hundreds of levels to confirm this stays theoretical.
+- **Shape scheduling (in `shapes.js`):** `shapeFor(level)` returns a shape key or null — a level is shaped iff `level ≥ 10 && (level − 10) % 3 === 0`; shaped levels use `SHAPE_ORDER[((level − 10) / 3) % 6]` with `SHAPE_ORDER = [heart, diamond, plus, donut, hourglass, triangle]`. `maskFor(shapeKey, cols, rows)` samples the shape's implicit formula at cell centers over its bounding box → `Uint8Array` (1 = open). `generateLevel` passes the mask to every candidate build for that level. A shaped level that coincides with a breather (e.g., level 10) is simply both: shaped and easiest-of-pool.
 - **Candidate scoring smooths the curve:** for level N, generate 8 candidate boards (seeds `hash(N, 0..7)`), score each, and pick by *percentile within the candidate pool*: breather levels take the easiest candidate; normal levels ramp from the 30th to the 90th percentile across their bracket. Distribution-relative selection auto-calibrates to whatever scores each board size can produce (an absolute target curve was tried first and degenerated to easiest-of-8 for mid-game brackets).
 
 **Difficulty score** of a board (weights in `balance.js`):
@@ -76,7 +81,9 @@ Loaded with top-level `await` at boot before the menu is constructed.
 
 ## 3. Screens & UI
 
-**Theme: Paper Minimal** — warm off-white background `#f4f1ea`, board panel `#ece8df`, grid lines `#dcd7cb`, near-black snake pieces `#2b2b2e` drawn as thick rounded polylines (≈0.72× cell width, round caps/joins give the curved look) with an off-white arrowhead glyph on the head, single red accent `#e2574c` (hearts, fail text, hint highlight outlining the whole hinted piece). Palette validated in `mockups/theme-explorer.html` (theme A).
+**Theme: Paper Minimal** — warm off-white background `#f4f1ea`, board cells `#ece8df`, near-black snake pieces `#2b2b2e` drawn as thick rounded polylines (≈0.72× cell width, round caps/joins give the curved look) with an off-white arrowhead glyph on the head, single red accent `#e2574c` (hearts, fail text, hint highlight outlining the whole hinted piece). Palette validated in `mockups/theme-explorer.html` (theme A).
+
+**Board rendering is per-cell:** every playable (non-`WALL`) cell draws its own small rounded background tile; wall cells draw nothing, so the board silhouette is the shape itself (rectangles keep looking like the old panel, just with per-cell texture instead of grid lines). Hit-testing returns nothing for wall cells, and `tapCell` treats any negative grid value (`EMPTY` or `WALL`) as inert.
 
 1. **Menu** — title, "Level N", Play (primary CTA), sound toggle, gold balance, version caption (bottom center, Caption size).
 2. **Game** — HUD top: level number, hearts (3 heart icons), gold balance; board centered; bottom bar: Hint button (shows 25g cost), Restart button. Version caption in a corner.
@@ -101,6 +108,7 @@ ArrowEscape/
   .zipignore           # excludes mockups/ docs/ tests/ CLAUDE.md etc.
   src/
     balance.js         # ALL tuning constants + VERSION (bumped every commit)
+    shapes.js          # shape formulas, mask sampler, per-level shape schedule (pure)
     generator.js       # rng, reverse-construction builder, scorer, candidate picker (pure)
     gameData.js        # allocGameData(balance) — single mutable state object
     logic.js           # pure: tap resolution, path checks, animation state, hearts, win/fail
@@ -128,8 +136,9 @@ ArrowEscape/
 `tests/generator.test.js` (run with `node --test`):
 
 1. **Solvability** — for many levels across the ramp, simulate wave-removal until empty; assert every generated board fully clears.
-2. **Full coverage** — every cell of every generated board belongs to exactly one snake; all lengths within the bracket's range.
-3. **Determinism** — same level number twice → identical board layout.
+2. **Full coverage** — every open cell of every generated board belongs to exactly one snake; all lengths within the bracket's range; wall cells never hold pieces.
+3. **Determinism** — same level number twice → identical board layout (including shaped levels).
+3b. **Shape correctness** — shaped levels carry the scheduled shape's mask; the mask sampler produces the expected silhouettes at ramp sizes (golden-grid assertions for at least heart at 10×14 and 5×7); shaped boards are solvable; `tapCell` on a wall cell is inert.
 4. **Ramp sanity** — average difficulty score over levels 1–300 is monotonically increasing per bracket; every 5th level scores below its neighbors.
 5. **Hint validity** — hint always returns a currently-free arrow on any reachable state.
 
@@ -137,4 +146,4 @@ Gameplay/UI verified manually in the browser via local dev server (port 8092) + 
 
 ## Out of scope for v1
 
-Custom board shapes (heart, diamond, letters — the mask plumbing ships in v1 but only the rectangle mask is used; the future shapes task must also teach `tapCell` in logic.js to ignore `WALL` cells, which currently only checks `EMPTY`), daily challenges, streaks (freezers/fixers), shop/NBucks integration, level select, alternate themes, leaderboards, undo.
+Additional shapes beyond the six (letters, seasonal shapes), daily challenges, streaks (freezers/fixers), shop/NBucks integration, level select, alternate themes, leaderboards, undo.
