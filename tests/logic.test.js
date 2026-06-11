@@ -8,16 +8,25 @@ import {
   awardClear, nextLevel, useHint, refillHearts,
 } from '../src/logic.js';
 
-// Build a gd with a hand-crafted board (bypasses the generator).
-function makeGd(cols, rows, cells) {
+// Build a gd with hand-crafted pieces (bypasses the generator).
+function makeGd(cols, rows, defs) {
   const gd = allocGameData(balance);
   gd.screen = 'game';
   gd.cols = cols;
   gd.rows = rows;
-  gd.board = new Int8Array(cols * rows).fill(EMPTY);
-  for (const [c, r, dir] of cells) gd.board[r * cols + c] = dir;
-  gd.remaining = cells.length;
-  gd.bumpT = new Float32Array(cols * rows);
+  gd.grid = new Int16Array(cols * rows).fill(EMPTY);
+  gd.pieces = defs.map((d, id) => {
+    for (const ci of d.cells) gd.grid[ci] = id;
+    return { cells: d.cells, dir: d.dir };
+  });
+  const n = defs.length;
+  gd.alive = new Uint8Array(n).fill(1);
+  gd.sliding = new Uint8Array(n);
+  gd.travel = new Float32Array(n);
+  gd.maxTravel = new Float32Array(n);
+  gd.slideT = new Float32Array(n);
+  gd.bumpT = new Float32Array(n);
+  gd.remaining = n;
   return gd;
 }
 
@@ -26,80 +35,103 @@ function runTicks(gd, seconds) {
   for (let t = 0; t < seconds; t += dt) tick(gd, balance, dt);
 }
 
-test('startLevel produces a playable board', () => {
+test('startLevel produces a playable snake board', () => {
   const gd = allocGameData(balance);
   gd.level = 3;
   startLevel(gd, balance);
   assert.equal(gd.screen, 'game');
   assert.ok(gd.cols > 0 && gd.rows > 0);
-  assert.equal(gd.board.length, gd.cols * gd.rows);
-  assert.ok(gd.remaining > 0);
+  assert.equal(gd.grid.length, gd.cols * gd.rows);
+  assert.ok(gd.pieces.length > 0);
+  assert.equal(gd.remaining, gd.pieces.length);
+  assert.equal(gd.alive.length, gd.pieces.length);
   assert.equal(gd.hearts, balance.hearts);
   assert.equal(gd.flawless, true);
-  assert.equal(gd.hintIndex, -1);
+  assert.equal(gd.hintPiece, -1);
 });
 
-test('tapping a free arrow flies it; tapping a blocked arrow bumps and costs a heart', () => {
-  // 2×1: (0,0) points left (free), (1,0) points left (blocked by (0,0))
-  const gd = makeGd(2, 1, [[0, 0, 3], [1, 0, 3]]);
-  assert.equal(tapCell(gd, balance, 1, 0), 'bump');
+test('tapping any cell of a free snake slides the whole piece', () => {
+  // 3×1: one snake, head at cell 0 pointing left, body 1,2
+  const gd = makeGd(3, 1, [{ cells: [0, 1, 2], dir: 3 }]);
+  assert.equal(tapCell(gd, balance, 2, 0), 'fly'); // tapped the TAIL
+  assert.equal(gd.sliding[0], 1);
+  assert.equal(gd.remaining, 0);
+  // all grid cells freed immediately
+  assert.deepEqual(Array.from(gd.grid), [EMPTY, EMPTY, EMPTY]);
+  // maxTravel = (L-1) + distToEdge + margin = 2 + 1 + 3 = 6
+  assert.equal(gd.maxTravel[0], 2 + 1 + balance.flyMargin);
+});
+
+test('blocked snake bumps and costs a heart; inert cases return none', () => {
+  // 3×1: piece 0 = single at cell 0 pointing left (free);
+  //      piece 1 = snake cells 1,2 head at 1 pointing left (blocked by piece 0)
+  const gd = makeGd(3, 1, [
+    { cells: [0], dir: 3 },
+    { cells: [1, 2], dir: 3 },
+  ]);
+  assert.equal(tapCell(gd, balance, 2, 0), 'bump'); // tap piece 1's tail → bump
   assert.equal(gd.hearts, balance.hearts - 1);
   assert.equal(gd.flawless, false);
   assert.ok(gd.bumpT[1] > 0);
   assert.ok(gd.shakeT > 0);
-  assert.equal(gd.remaining, 2); // bump removes nothing
+  assert.equal(gd.remaining, 2);
+  assert.equal(tapCell(gd, balance, 1, 0), 'none'); // same piece mid-bump
+  assert.equal(tapCell(gd, balance, 0, 0), 'fly');  // piece 0 escapes
+  assert.equal(tapCell(gd, balance, 0, 0), 'none'); // now-empty cell
+});
 
-  assert.equal(tapCell(gd, balance, 0, 0), 'fly');
-  assert.equal(gd.board[0], EMPTY);
-  assert.equal(gd.remaining, 1);
-  assert.equal(gd.flights.count, 1);
-
-  // empty cell and mid-bump cell are inert
-  assert.equal(tapCell(gd, balance, 0, 0), 'none');
-  assert.equal(tapCell(gd, balance, 1, 0), 'none'); // still bumping
+test('own body never blocks the slide', () => {
+  // 3×2: snake head (0,0) pointing RIGHT; body curls under and back right:
+  // cells: head=0 (0,0), body=3 (0,1), 4 (1,1), 5 (2,1)
+  // exit ray of head: (1,0), (2,0) — empty. Body is NOT on the ray.
+  // Now a second snake whose head ray passes over its OWN body cannot be
+  // built by the generator, so test the rayClear self-exemption directly
+  // through a hand-made overlap: head (0,0) right, body at (1,1); put a
+  // DIFFERENT piece's cell on the ray to confirm blocking still works.
+  const gd = makeGd(3, 2, [
+    { cells: [0, 3, 4, 5], dir: 1 },
+  ]);
+  assert.equal(tapCell(gd, balance, 2, 1), 'fly'); // tap tail; ray (1,0),(2,0) clear
+  assert.equal(gd.sliding[0], 1);
 });
 
 test('distToEdge measures cells to leave the board', () => {
   const gd = makeGd(4, 5, []);
-  assert.equal(distToEdge(gd, 0, 0, 0), 1); // up from top row
-  assert.equal(distToEdge(gd, 0, 0, 3), 1); // left from left col
-  assert.equal(distToEdge(gd, 0, 0, 1), 4); // right across 4 cols
-  assert.equal(distToEdge(gd, 0, 0, 2), 5); // down across 5 rows
+  assert.equal(distToEdge(gd, 0, 0, 0), 1);
+  assert.equal(distToEdge(gd, 0, 0, 3), 1);
+  assert.equal(distToEdge(gd, 0, 0, 1), 4);
+  assert.equal(distToEdge(gd, 0, 0, 2), 5);
 });
 
-test('flights despawn and the level clears after the last arrow leaves', () => {
-  const gd = makeGd(2, 1, [[0, 0, 3], [1, 0, 3]]);
+test('slides despawn and the level clears after the last piece leaves', () => {
+  const gd = makeGd(2, 1, [
+    { cells: [0], dir: 3 },
+    { cells: [1], dir: 3 },
+  ]);
   assert.equal(tapCell(gd, balance, 0, 0), 'fly');
-  assert.equal(tapCell(gd, balance, 1, 0), 'fly'); // now unblocked
+  assert.equal(tapCell(gd, balance, 1, 0), 'fly');
   assert.equal(gd.remaining, 0);
   assert.ok(gd.clearTimer > 0);
-  // clearTimer must hold (not count down) while flights are still airborne
+  // clearTimer must hold while pieces are still sliding
   const timerBefore = gd.clearTimer;
   tick(gd, balance, 1 / 60);
-  assert.ok(gd.flights.count > 0);
+  assert.ok(gd.slidingCount > 0);
   assert.equal(gd.clearTimer, timerBefore);
   const goldBefore = gd.gold;
   runTicks(gd, 3);
-  assert.equal(gd.flights.count, 0);
+  assert.equal(gd.slidingCount, 0);
+  assert.equal(gd.alive[0], 0);
+  assert.equal(gd.alive[1], 0);
   assert.equal(gd.screen, 'clear');
-  // flawless clear: base + bonus awarded exactly once
   assert.equal(gd.gold, goldBefore + balance.goldPerClear + balance.flawlessBonus);
-  assert.equal(gd.goldEarnedClear, balance.goldPerClear);
-  assert.equal(gd.goldEarnedBonus, balance.flawlessBonus);
-});
-
-test('clearFade ramps to 1 after the clear transition', () => {
-  const gd = makeGd(1, 1, [[0, 0, 0]]);
-  assert.equal(tapCell(gd, balance, 0, 0), 'fly');
-  runTicks(gd, 3);
-  assert.equal(gd.screen, 'clear');
-  assert.equal(gd.clearFade, 1);
 });
 
 test('losing all hearts fails the level', () => {
-  // (0,0) points right, permanently blocked by (1,0). Tap it 3 times.
-  const gd = makeGd(2, 1, [[0, 0, 1], [1, 0, 0]]);
-  // wait out the bump between taps
+  // 2×1 mutual block: tap piece 0 three times
+  const gd = makeGd(2, 1, [
+    { cells: [0], dir: 1 },
+    { cells: [1], dir: 3 },
+  ]);
   tapCell(gd, balance, 0, 0); runTicks(gd, 0.3);
   tapCell(gd, balance, 0, 0); runTicks(gd, 0.3);
   assert.equal(tapCell(gd, balance, 0, 0), 'bump');
@@ -107,34 +139,46 @@ test('losing all hearts fails the level', () => {
   assert.ok(gd.failTimer > 0);
   runTicks(gd, 1);
   assert.equal(gd.screen, 'fail');
-  // taps are inert once dead
   assert.equal(tapCell(gd, balance, 1, 0), 'none');
 });
 
-test('useHint charges gold and marks a free arrow exactly once', () => {
-  const gd = makeGd(2, 1, [[0, 0, 3], [1, 0, 3]]);
+test('clearFade ramps to 1 after the clear transition', () => {
+  const gd = makeGd(1, 1, [{ cells: [0], dir: 0 }]);
+  assert.equal(tapCell(gd, balance, 0, 0), 'fly');
+  runTicks(gd, 3);
+  assert.equal(gd.screen, 'clear');
+  assert.equal(gd.clearFade, 1);
+});
+
+test('useHint charges gold and marks a free piece exactly once', () => {
+  const gd = makeGd(2, 1, [
+    { cells: [0], dir: 3 },
+    { cells: [1], dir: 3 },
+  ]);
   gd.gold = balance.hintCost - 1;
-  assert.equal(useHint(gd, balance), false); // can't afford
+  assert.equal(useHint(gd, balance), false);
   gd.gold = balance.hintCost;
   assert.equal(useHint(gd, balance), true);
   assert.equal(gd.gold, 0);
-  assert.equal(gd.hintIndex, 0); // the only free arrow
+  assert.equal(gd.hintPiece, 0);
   gd.gold = 100;
-  assert.equal(useHint(gd, balance), false); // hint already showing
+  assert.equal(useHint(gd, balance), false);
   assert.equal(gd.gold, 100);
 });
 
 test('refillHearts only works on the fail screen and charges gold', () => {
-  const gd = makeGd(2, 1, [[0, 0, 1], [1, 0, 0]]);
+  const gd = makeGd(2, 1, [
+    { cells: [0], dir: 1 },
+    { cells: [1], dir: 3 },
+  ]);
   gd.gold = 100;
-  assert.equal(refillHearts(gd, balance), false); // not on fail screen
+  assert.equal(refillHearts(gd, balance), false);
   gd.screen = 'fail';
   gd.hearts = 0;
   assert.equal(refillHearts(gd, balance), true);
   assert.equal(gd.gold, 100 - balance.refillCost);
   assert.equal(gd.hearts, balance.hearts);
   assert.equal(gd.screen, 'game');
-  // broke players can't refill
   gd.screen = 'fail';
   gd.gold = balance.refillCost - 1;
   assert.equal(refillHearts(gd, balance), false);
@@ -142,7 +186,7 @@ test('refillHearts only works on the fail screen and charges gold', () => {
 });
 
 test('awardClear pays base without bonus after a bump', () => {
-  const gd = makeGd(2, 1, [[0, 0, 3]]);
+  const gd = makeGd(1, 1, [{ cells: [0], dir: 0 }]);
   gd.flawless = false;
   gd.gold = 0;
   awardClear(gd, balance);

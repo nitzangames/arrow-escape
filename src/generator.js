@@ -1,7 +1,9 @@
 // Pure board generation and analysis. No DOM — runs under Node for tests.
 //
-// Board representation: Int8Array(cols*rows); index i = r*cols + c;
-// value EMPTY (-1) or direction 0=up 1=right 2=down 3=left.
+// A piece is a snake: an ordered list of cell indices (head first) forming a
+// 4-connected path, plus the head's pointing direction (away from the body).
+// The grid maps each cell to its piece index (EMPTY = -1). Index i = r*cols+c;
+// directions 0=up 1=right 2=down 3=left.
 
 export const EMPTY = -1;
 export const DIRS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
@@ -22,86 +24,119 @@ export function levelSeed(level, candidate) {
 }
 
 export function rampFor(level, balance) {
-  for (const [maxLevel, cols, rows, minArrows, maxArrows] of balance.ramp) {
-    if (level <= maxLevel) return { cols, rows, minArrows, maxArrows };
+  for (const [maxLevel, cols, rows, minPieces, maxPieces, minLen, maxLen] of balance.ramp) {
+    if (level <= maxLevel) return { cols, rows, minPieces, maxPieces, minLen, maxLen };
   }
 }
 
-// True if the straight path from (c,r) to the board edge in `dir` is empty.
-export function pathClear(board, cols, rows, c, r, dir) {
+// True if the straight ray from a head (exclusive) to the edge is free of
+// other pieces. selfId cells never block: a piece's own body can't obstruct
+// its slide (the body vacates along the same track).
+export function rayClear(grid, cols, rows, selfId, c, r, dir) {
   const dx = DIRS[dir][0], dy = DIRS[dir][1];
   let x = c + dx, y = r + dy;
   while (x >= 0 && x < cols && y >= 0 && y < rows) {
-    if (board[y * cols + x] !== EMPTY) return false;
+    const v = grid[y * cols + x];
+    if (v !== EMPTY && v !== selfId) return false;
     x += dx; y += dy;
   }
   return true;
 }
 
-// Reverse construction: each arrow is placed only where it has a clear exit
-// at placement time, so removing arrows in reverse placement order always
-// solves the board — solvability is guaranteed by construction.
-export function buildBoard(rng, cols, rows, targetArrows) {
-  const board = new Int8Array(cols * rows).fill(EMPTY);
-  let count = 0;
-  let guard = targetArrows * 60;
-  while (count < targetArrows && guard-- > 0) {
-    const c = (rng() * cols) | 0;
-    const r = (rng() * rows) | 0;
-    if (board[r * cols + c] !== EMPTY) continue;
+// True if (x,y) lies on the open ray from (hc,hr) in direction dir.
+function onRay(hc, hr, dir, x, y) {
+  const dx = DIRS[dir][0], dy = DIRS[dir][1];
+  if (dx === 0) return x === hc && Math.sign(y - hr) === dy;
+  return y === hr && Math.sign(x - hc) === dx;
+}
+
+// Reverse construction with snakes: each piece is placed only where its head's
+// exit ray is clear of all earlier pieces, so removing pieces in reverse
+// placement order always clears the board (the latest remaining piece is
+// always free). The body grows backward from the head — first cell directly
+// behind the head, later cells may bend — and never steps onto occupied
+// cells, onto itself, or onto the head's exit ray.
+export function buildBoard(rng, cols, rows, targetPieces, minLen, maxLen) {
+  const grid = new Int16Array(cols * rows).fill(EMPTY);
+  const pieces = [];
+  let guard = targetPieces * 80;
+  while (pieces.length < targetPieces && guard-- > 0) {
+    const hc = (rng() * cols) | 0;
+    const hr = (rng() * rows) | 0;
+    if (grid[hr * cols + hc] !== EMPTY) continue;
     const d0 = (rng() * 4) | 0;
     for (let k = 0; k < 4; k++) {
       const dir = (d0 + k) % 4;
-      if (pathClear(board, cols, rows, c, r, dir)) {
-        board[r * cols + c] = dir;
-        count++;
-        break;
+      if (!rayClear(grid, cols, rows, pieces.length, hc, hr, dir)) continue;
+      const targetLen = minLen + ((rng() * (maxLen - minLen + 1)) | 0);
+      const cells = [hr * cols + hc];
+      let bc = hc, br = hr;
+      let walkDir = (dir + 2) % 4; // first body cell sits directly behind the head
+      for (let len = 1; len < targetLen; len++) {
+        const turn = rng() < 0.5 ? 1 : 3;
+        const tries = len === 1
+          ? [walkDir]                                  // behind the head is mandatory
+          : [walkDir, (walkDir + turn) % 4, (walkDir + 4 - turn) % 4];
+        let moved = false;
+        for (const wd of tries) {
+          const nx = bc + DIRS[wd][0], ny = br + DIRS[wd][1];
+          if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+          const ni = ny * cols + nx;
+          if (grid[ni] !== EMPTY || cells.includes(ni) || onRay(hc, hr, dir, nx, ny)) continue;
+          cells.push(ni);
+          bc = nx; br = ny; walkDir = wd;
+          moved = true;
+          break;
+        }
+        if (!moved) break;
       }
+      if (cells.length < minLen) continue; // couldn't grow enough — try another dir
+      const id = pieces.length;
+      for (const ci of cells) grid[ci] = id;
+      pieces.push({ cells, dir });
+      break;
     }
   }
-  return { board, count };
+  return { pieces, grid };
 }
 
-// Solve by waves: repeatedly remove every currently-free arrow at once.
-// waves = number of passes needed (sequential-dependency depth).
-// Non-mutating (works on a copy).
-export function simulateWaves(board, cols, rows) {
-  const work = Int8Array.from(board);
-  let remaining = 0;
-  for (let i = 0; i < work.length; i++) if (work[i] !== EMPTY) remaining++;
+// Solve by waves: repeatedly remove every currently-free piece at once.
+// waves = number of passes (sequential-dependency depth). Non-mutating.
+export function simulateWaves(pieces, grid, cols, rows) {
+  const g = Int16Array.from(grid);
+  const alive = new Uint8Array(pieces.length).fill(1);
+  let remaining = pieces.length;
   let waves = 0;
   while (remaining > 0) {
-    const freeIdx = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const v = work[r * cols + c];
-        if (v !== EMPTY && pathClear(work, cols, rows, c, r, v)) freeIdx.push(r * cols + c);
-      }
+    const freeIds = [];
+    for (let p = 0; p < pieces.length; p++) {
+      if (!alive[p]) continue;
+      const head = pieces[p].cells[0];
+      if (rayClear(g, cols, rows, p, head % cols, (head / cols) | 0, pieces[p].dir)) freeIds.push(p);
     }
-    if (freeIdx.length === 0) return { waves, cleared: false };
-    for (const i of freeIdx) work[i] = EMPTY;
-    remaining -= freeIdx.length;
+    if (freeIds.length === 0) return { waves, cleared: false };
+    for (const p of freeIds) {
+      alive[p] = 0;
+      for (const ci of pieces[p].cells) g[ci] = EMPTY;
+    }
+    remaining -= freeIds.length;
     waves++;
   }
   return { waves, cleared: true };
 }
 
 // Difficulty score: more waves (forced ordering), more initially-blocked
-// arrows, and more arrows overall = harder. Weights live in balance.scoreWeights.
-export function scoreBoard(board, cols, rows, weights) {
-  let arrowCount = 0, freeCount = 0;
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const v = board[r * cols + c];
-      if (v === EMPTY) continue;
-      arrowCount++;
-      if (pathClear(board, cols, rows, c, r, v)) freeCount++;
-    }
+// pieces, and more pieces overall = harder. Weights in balance.scoreWeights.
+export function scoreBoard(pieces, grid, cols, rows, weights) {
+  if (pieces.length === 0) return 0;
+  let freeCount = 0;
+  for (let p = 0; p < pieces.length; p++) {
+    const head = pieces[p].cells[0];
+    if (rayClear(grid, cols, rows, p, head % cols, (head / cols) | 0, pieces[p].dir)) freeCount++;
   }
-  if (arrowCount === 0) return 0;
-  const freeRatio = freeCount / arrowCount;
-  const { waves } = simulateWaves(board, cols, rows);
-  return waves * weights.wave + (1 - freeRatio) * weights.blocked + arrowCount * weights.count;
+  const freeRatio = freeCount / pieces.length;
+  const { waves } = simulateWaves(pieces, grid, cols, rows);
+  return waves * weights.wave + (1 - freeRatio) * weights.blocked + pieces.length * weights.count;
 }
 
 export function isBreather(level, balance) {
@@ -123,8 +158,7 @@ export function bracketRange(level, balance) {
 
 // Difficulty is distribution-relative: rank candidates by score, then pick
 // by percentile — breathers take the easiest candidate, normal levels ramp
-// from percentileMin to percentileMax across their bracket. This
-// auto-calibrates to whatever scores each board size can actually produce.
+// from percentileMin to percentileMax across their bracket.
 export function pickIndexForLevel(level, scores, balance) {
   const order = scores.map((s, i) => i).sort((a, b) => scores[a] - scores[b] || a - b);
   if (isBreather(level, balance)) return order[0];
@@ -134,50 +168,51 @@ export function pickIndexForLevel(level, scores, balance) {
   return order[Math.round(p * (order.length - 1))];
 }
 
-// Hint: among currently-free arrows, pick the one whose removal frees the
-// most blocked arrows (ties → lowest index). Returns a cell index, or -1.
-// Temporarily toggles cells but always restores them before returning.
-export function findHint(board, cols, rows) {
-  let bestIdx = -1;
-  let bestGain = -1;
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const i = r * cols + c;
-      const v = board[i];
-      if (v === EMPTY || !pathClear(board, cols, rows, c, r, v)) continue;
-      let gain = 0;
-      for (let r2 = 0; r2 < rows; r2++) {
-        for (let c2 = 0; c2 < cols; c2++) {
-          const j = r2 * cols + c2;
-          const v2 = board[j];
-          if (j === i || v2 === EMPTY) continue;
-          const freeBefore = pathClear(board, cols, rows, c2, r2, v2);
-          if (freeBefore) continue;
-          board[i] = EMPTY;
-          const freeAfter = pathClear(board, cols, rows, c2, r2, v2);
-          board[i] = v;
-          if (freeAfter) gain++;
-        }
-      }
-      if (gain > bestGain) { bestGain = gain; bestIdx = i; }
-    }
-  }
-  return bestIdx;
-}
-
 // Level N: generate `balance.candidates` boards from derived seeds, score
-// each, return the one at the level's percentile within the candidate pool.
+// each, pick by percentile.
 export function generateLevel(level, balance) {
-  const { cols, rows, minArrows, maxArrows } = rampFor(level, balance);
+  const { cols, rows, minPieces, maxPieces, minLen, maxLen } = rampFor(level, balance);
   const boards = [];
   const scores = [];
   for (let k = 0; k < balance.candidates; k++) {
     const rng = mulberry32(levelSeed(level, k));
-    const targetArrows = minArrows + ((rng() * (maxArrows - minArrows + 1)) | 0);
-    const built = buildBoard(rng, cols, rows, targetArrows);
+    const targetPieces = minPieces + ((rng() * (maxPieces - minPieces + 1)) | 0);
+    const built = buildBoard(rng, cols, rows, targetPieces, minLen, maxLen);
     boards.push(built);
-    scores.push(scoreBoard(built.board, cols, rows, balance.scoreWeights));
+    scores.push(scoreBoard(built.pieces, built.grid, cols, rows, balance.scoreWeights));
   }
   const pick = pickIndexForLevel(level, scores, balance);
-  return { cols, rows, board: boards[pick].board, count: boards[pick].count, score: scores[pick] };
+  return {
+    cols, rows,
+    pieces: boards[pick].pieces,
+    grid: boards[pick].grid,
+    count: boards[pick].pieces.length,
+    score: scores[pick],
+  };
+}
+
+// Hint: among currently-free pieces (optionally restricted to `alive`), pick
+// the one whose removal frees the most blocked pieces (ties → lowest index).
+// Returns a piece index, or -1. Temporarily toggles grid cells but always
+// restores them before returning.
+export function findHint(pieces, grid, cols, rows, alive) {
+  let bestIdx = -1, bestGain = -1;
+  for (let p = 0; p < pieces.length; p++) {
+    if (alive && !alive[p]) continue;
+    const headP = pieces[p].cells[0];
+    if (!rayClear(grid, cols, rows, p, headP % cols, (headP / cols) | 0, pieces[p].dir)) continue;
+    let gain = 0;
+    for (let q = 0; q < pieces.length; q++) {
+      if (q === p || (alive && !alive[q])) continue;
+      const headQ = pieces[q].cells[0];
+      const qc = headQ % cols, qr = (headQ / cols) | 0;
+      if (rayClear(grid, cols, rows, q, qc, qr, pieces[q].dir)) continue; // already free
+      for (const ci of pieces[p].cells) grid[ci] = EMPTY;
+      const freeAfter = rayClear(grid, cols, rows, q, qc, qr, pieces[q].dir);
+      for (const ci of pieces[p].cells) grid[ci] = p;
+      if (freeAfter) gain++;
+    }
+    if (gain > bestGain) { bestGain = gain; bestIdx = p; }
+  }
+  return bestIdx;
 }

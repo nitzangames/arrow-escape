@@ -1,20 +1,26 @@
 // Pure game logic. No DOM — runs under Node for tests.
 // Every function takes (gd, balance, ...) and mutates gd in place.
 
-import { generateLevel, findHint, pathClear, EMPTY } from './generator.js';
+import { generateLevel, findHint, rayClear, EMPTY } from './generator.js';
 
 export function startLevel(gd, balance) {
   const gen = generateLevel(gd.level, balance);
   gd.cols = gen.cols;
   gd.rows = gen.rows;
-  gd.board = gen.board;
-  gd.remaining = gen.count;
-  gd.bumpT = new Float32Array(gen.cols * gen.rows);
-  gd.flights.active.fill(0);
-  gd.flights.count = 0;
+  gd.pieces = gen.pieces;
+  gd.grid = gen.grid;
+  const n = gen.pieces.length;
+  gd.alive = new Uint8Array(n).fill(1);
+  gd.sliding = new Uint8Array(n);
+  gd.travel = new Float32Array(n);
+  gd.maxTravel = new Float32Array(n);
+  gd.slideT = new Float32Array(n);
+  gd.bumpT = new Float32Array(n);
+  gd.slidingCount = 0;
+  gd.remaining = n;
   gd.hearts = balance.hearts;
   gd.flawless = true;
-  gd.hintIndex = -1;
+  gd.hintPiece = -1;
   gd.hintPulse = 0;
   gd.shakeT = 0;
   gd.clearTimer = 0;
@@ -33,39 +39,28 @@ export function distToEdge(gd, c, r, dir) {
   return c + 1;
 }
 
-function spawnFlight(gd, balance, c, r, dir) {
-  const f = gd.flights;
-  for (let k = 0; k < f.active.length; k++) {
-    if (f.active[k]) continue;
-    f.active[k] = 1;
-    f.c[k] = c;
-    f.r[k] = r;
-    f.dir[k] = dir;
-    f.dist[k] = 0;
-    f.t[k] = 0;
-    f.maxDist[k] = distToEdge(gd, c, r, dir) + balance.flyMargin;
-    f.count++;
-    return;
-  }
-  // Pool exhausted: the arrow simply vanishes (caller decrements remaining).
-}
-
 export function tapCell(gd, balance, c, r) {
   if (gd.screen !== 'game' || gd.hearts <= 0) return 'none';
   if (c < 0 || c >= gd.cols || r < 0 || r >= gd.rows) return 'none';
-  const i = r * gd.cols + c;
-  const dir = gd.board[i];
-  if (dir === EMPTY || gd.bumpT[i] > 0) return 'none';
+  const p = gd.grid[r * gd.cols + c];
+  if (p === EMPTY || gd.bumpT[p] > 0) return 'none';
   gd.dirty = true;
-  if (pathClear(gd.board, gd.cols, gd.rows, c, r, dir)) {
-    gd.board[i] = EMPTY;
-    spawnFlight(gd, balance, c, r, dir);
+  const piece = gd.pieces[p];
+  const head = piece.cells[0];
+  const hc = head % gd.cols, hr = (head / gd.cols) | 0;
+  if (rayClear(gd.grid, gd.cols, gd.rows, p, hc, hr, piece.dir)) {
+    for (const ci of piece.cells) gd.grid[ci] = EMPTY; // stops blocking immediately
+    gd.sliding[p] = 1;
+    gd.travel[p] = 0;
+    gd.slideT[p] = 0;
+    gd.maxTravel[p] = (piece.cells.length - 1) + distToEdge(gd, hc, hr, piece.dir) + balance.flyMargin;
+    gd.slidingCount++;
     gd.remaining--;
-    if (gd.hintIndex === i) gd.hintIndex = -1;
+    if (gd.hintPiece === p) gd.hintPiece = -1;
     if (gd.remaining === 0) gd.clearTimer = balance.clearDelay;
     return 'fly';
   }
-  gd.bumpT[i] = balance.bumpDur;
+  gd.bumpT[p] = balance.bumpDur;
   gd.hearts--;
   gd.flawless = false;
   gd.shakeT = balance.shakeDur;
@@ -74,7 +69,7 @@ export function tapCell(gd, balance, c, r) {
 }
 
 // Callers must clamp dt (the rAF loop caps at 1/30 s) — a multi-second dt
-// from a tab restore would expire timers and snap flights in one tick.
+// from a tab restore would expire timers and snap slides in one tick.
 export function tick(gd, balance, dt) {
   if (gd.screen === 'clear' && gd.clearFade < 1) {
     gd.clearFade = Math.min(1, gd.clearFade + dt * 3);
@@ -84,21 +79,19 @@ export function tick(gd, balance, dt) {
   if (gd.screen !== 'game') return;
   let animating = false;
 
-  const f = gd.flights;
-  for (let k = 0; k < f.active.length; k++) {
-    if (!f.active[k]) continue;
-    f.t[k] += dt;
-    f.dist[k] += (balance.flySpeed + balance.flyAccel * f.t[k]) * dt;
-    if (f.dist[k] >= f.maxDist[k]) {
-      f.active[k] = 0;
-      f.count--;
+  for (let p = 0; p < gd.pieces.length; p++) {
+    if (gd.sliding[p]) {
+      gd.slideT[p] += dt;
+      gd.travel[p] += (balance.flySpeed + balance.flyAccel * gd.slideT[p]) * dt;
+      if (gd.travel[p] >= gd.maxTravel[p]) {
+        gd.sliding[p] = 0;
+        gd.alive[p] = 0;
+        gd.slidingCount--;
+      }
+      animating = true;
     }
-    animating = true;
-  }
-
-  for (let i = 0; i < gd.bumpT.length; i++) {
-    if (gd.bumpT[i] > 0) {
-      gd.bumpT[i] = Math.max(0, gd.bumpT[i] - dt);
+    if (gd.bumpT[p] > 0) {
+      gd.bumpT[p] = Math.max(0, gd.bumpT[p] - dt);
       animating = true;
     }
   }
@@ -107,13 +100,13 @@ export function tick(gd, balance, dt) {
     gd.shakeT = Math.max(0, gd.shakeT - dt);
     animating = true;
   }
-  if (gd.hintIndex >= 0) {
+  if (gd.hintPiece >= 0) {
     gd.hintPulse += dt;
     animating = true;
   }
 
-  // Clear overlay waits for the last flight to leave the screen.
-  if (gd.clearTimer > 0 && f.count === 0) {
+  // Clear overlay waits for the last slide to leave the screen.
+  if (gd.clearTimer > 0 && gd.slidingCount === 0) {
     gd.clearTimer -= dt;
     if (gd.clearTimer <= 0) {
       awardClear(gd, balance);
@@ -121,8 +114,8 @@ export function tick(gd, balance, dt) {
     }
     animating = true;
   }
-  // Unlike clearTimer, failTimer doesn't wait for flights: fail comes from a
-  // bump, and with current balance all flights drain well within failDelay.
+  // Unlike clearTimer, failTimer doesn't wait for slides: fail comes from a
+  // bump, and with current balance all slides drain well within failDelay.
   if (gd.failTimer > 0) {
     gd.failTimer -= dt;
     if (gd.failTimer <= 0) gd.screen = 'fail';
@@ -144,11 +137,18 @@ export function nextLevel(gd, balance) {
 }
 
 export function useHint(gd, balance) {
-  if (gd.screen !== 'game' || gd.hintIndex >= 0 || gd.gold < balance.hintCost) return false;
-  const idx = findHint(gd.board, gd.cols, gd.rows);
+  if (gd.screen !== 'game' || gd.hintPiece >= 0 || gd.gold < balance.hintCost) return false;
+  // hintable = alive and not sliding (a sliding piece's grid cells are already
+  // EMPTY, so it would look "free" with gain 0 and could win ties)
+  let idx = -1;
+  {
+    const mask = new Uint8Array(gd.pieces.length);
+    for (let p = 0; p < gd.pieces.length; p++) mask[p] = gd.alive[p] && !gd.sliding[p] ? 1 : 0;
+    idx = findHint(gd.pieces, gd.grid, gd.cols, gd.rows, mask);
+  }
   if (idx < 0) return false;
   gd.gold -= balance.hintCost;
-  gd.hintIndex = idx;
+  gd.hintPiece = idx;
   gd.hintPulse = 0;
   gd.dirty = true;
   return true;
