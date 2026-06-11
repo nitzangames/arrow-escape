@@ -1,7 +1,7 @@
 // All drawing + screen layout + hit-testing. Reads gd, never mutates it.
 // Paper Minimal theme, validated in mockups/theme-explorer.html (theme A).
 
-import { EMPTY, DIRS } from './generator.js';
+import { DIRS } from './generator.js';
 import { VERSION } from './balance.js';
 
 const W = 1080;
@@ -78,31 +78,100 @@ function roundRect(c, x, y, w, h, r) {
   c.closePath();
 }
 
-// Arrow tiles pre-rendered once (4 directions) at max cell size.
-const TILE = 150;
-const tileSprites = [];
+// --- snake piece drawing -------------------------------------------------
+// Pieces are stroked as thick rounded polylines through their cell centers.
+// A module-scope scratch point avoids per-frame allocation.
+const _pt = { x: 0, y: 0 };
 
-export function initSprites() {
-  if (tileSprites.length) return;
-  for (let dir = 0; dir < 4; dir++) {
-    const oc = document.createElement('canvas');
-    oc.width = TILE;
-    oc.height = TILE;
-    const c = oc.getContext('2d');
-    const pad = 8;
-    c.fillStyle = THEME.tile;
-    roundRect(c, pad, pad, TILE - pad * 2, TILE - pad * 2, 28);
-    c.fill();
-    c.translate(TILE / 2, TILE / 2);
-    c.rotate(dir * Math.PI / 2);
-    c.fillStyle = THEME.glyph;
-    c.beginPath();
-    c.moveTo(0, -40); c.lineTo(30, 0); c.lineTo(12, 0); c.lineTo(12, 38);
-    c.lineTo(-12, 38); c.lineTo(-12, 0); c.lineTo(-30, 0);
-    c.closePath();
-    c.fill();
-    tileSprites.push(oc);
+function cellCx(gd, g, ci) { return g.bx + ((ci % gd.cols) + 0.5) * g.cell; }
+function cellCy(gd, g, ci) { return g.by + (((ci / gd.cols) | 0) + 0.5) * g.cell; }
+
+// Trace the piece's resting path into the current ctx path (no stroke).
+function tracePiecePath(c, gd, g, p, ox, oy) {
+  const cells = gd.pieces[p].cells;
+  for (let j = cells.length - 1; j >= 0; j--) {
+    const x = cellCx(gd, g, cells[j]) + ox;
+    const y = cellCy(gd, g, cells[j]) + oy;
+    if (j === cells.length - 1) {
+      c.moveTo(x, y);
+      if (cells.length === 1) c.lineTo(x + 0.01, y); // dot → round-cap circle
+    } else {
+      c.lineTo(x, y);
+    }
   }
+}
+
+function setPieceStroke(c, g, widthFactor, style) {
+  c.lineCap = 'round';
+  c.lineJoin = 'round';
+  c.lineWidth = g.cell * widthFactor;
+  c.strokeStyle = style;
+}
+
+// Arrowhead triangle on the head, pointing dir, drawn in the glyph color.
+function drawHeadGlyph(c, x, y, cellPx, dir) {
+  const u = cellPx / 150;
+  c.save();
+  c.translate(x, y);
+  c.rotate(dir * Math.PI / 2);
+  c.fillStyle = THEME.glyph;
+  c.beginPath();
+  c.moveTo(0, -32 * u);
+  c.lineTo(24 * u, 14 * u);
+  c.lineTo(0, 4 * u);
+  c.lineTo(-24 * u, 14 * u);
+  c.closePath();
+  c.fill();
+  c.restore();
+}
+
+function drawPiece(c, gd, g, p, ox, oy) {
+  setPieceStroke(c, g, 0.72, THEME.tile);
+  c.beginPath();
+  tracePiecePath(c, gd, g, p, ox, oy);
+  c.stroke();
+  const head = gd.pieces[p].cells[0];
+  drawHeadGlyph(c, cellCx(gd, g, head) + ox, cellCy(gd, g, head) + oy, g.cell, gd.pieces[p].dir);
+}
+
+// Position (canvas px) of sliding segment j at the piece's current travel.
+// Track arclength: tail = 0 … head = L-1, then the straight exit ray.
+function segPos(gd, g, p, j, out) {
+  const piece = gd.pieces[p];
+  const L = piece.cells.length;
+  const s = (L - 1 - j) + gd.travel[p];
+  if (L > 1 && s <= L - 1) {
+    const k = Math.min(Math.floor(s), L - 2);
+    const f = s - k;
+    const a = piece.cells[L - 1 - k];     // arclength k   (tail side)
+    const b = piece.cells[L - 2 - k];     // arclength k+1 (head side)
+    out.x = cellCx(gd, g, a) + (cellCx(gd, g, b) - cellCx(gd, g, a)) * f;
+    out.y = cellCy(gd, g, a) + (cellCy(gd, g, b) - cellCy(gd, g, a)) * f;
+  } else {
+    const head = piece.cells[0];
+    const ext = s - (L - 1);
+    out.x = cellCx(gd, g, head) + DIRS[piece.dir][0] * ext * g.cell;
+    out.y = cellCy(gd, g, head) + DIRS[piece.dir][1] * ext * g.cell;
+  }
+}
+
+function drawSlidingPiece(c, gd, g, p) {
+  const piece = gd.pieces[p];
+  const L = piece.cells.length;
+  setPieceStroke(c, g, 0.72, THEME.tile);
+  c.beginPath();
+  for (let j = L - 1; j >= 0; j--) {
+    segPos(gd, g, p, j, _pt);
+    if (j === L - 1) {
+      c.moveTo(_pt.x, _pt.y);
+      if (L === 1) c.lineTo(_pt.x + 0.01, _pt.y);
+    } else {
+      c.lineTo(_pt.x, _pt.y);
+    }
+  }
+  c.stroke();
+  segPos(gd, g, p, 0, _pt);
+  drawHeadGlyph(c, _pt.x, _pt.y, g.cell, piece.dir); // head rides the straight ray → angle = dir
 }
 
 function drawHeart(c, x, y, s, color) {
@@ -215,50 +284,39 @@ function renderGame(c, gd, balance) {
     c.stroke();
   }
 
-  // Hint highlight under the tile
-  if (gd.hintIndex >= 0) {
-    const hc = gd.hintIndex % gd.cols;
-    const hr = (gd.hintIndex / gd.cols) | 0;
+  // Hint highlight: accent outline under the whole hinted piece
+  if (gd.hintPiece >= 0 && gd.alive[gd.hintPiece] && !gd.sliding[gd.hintPiece]) {
     const pulse = 0.5 + 0.5 * Math.sin(gd.hintPulse * 6);
     c.globalAlpha = 0.35 + 0.55 * pulse;
-    c.strokeStyle = THEME.accent;
-    c.lineWidth = 10;
-    roundRect(c, g.bx + hc * g.cell + 2, g.by + hr * g.cell + 2, g.cell - 4, g.cell - 4, 24);
+    setPieceStroke(c, g, 0.92, THEME.accent);
+    c.beginPath();
+    tracePiecePath(c, gd, g, gd.hintPiece, 0, 0);
     c.stroke();
     c.globalAlpha = 1;
   }
 
-  // Tiles (with bump offset)
-  const scale = g.cell / TILE;
-  for (let r = 0; r < gd.rows; r++) {
-    for (let col = 0; col < gd.cols; col++) {
-      const i = r * gd.cols + col;
-      const dir = gd.board[i];
-      if (dir === EMPTY) continue;
-      let ox = 0, oy = 0;
-      if (gd.bumpT[i] > 0) {
-        const k = Math.sin((1 - gd.bumpT[i] / balance.bumpDur) * Math.PI) * balance.bumpDist * scale;
-        ox = DIRS[dir][0] * k;
-        oy = DIRS[dir][1] * k;
-      }
-      c.drawImage(tileSprites[dir], g.bx + col * g.cell + ox, g.by + r * g.cell + oy, g.cell, g.cell);
+  // Resting pieces (with bump offset toward the blocker)
+  const bumpScale = g.cell / 150;
+  for (let p = 0; p < gd.pieces.length; p++) {
+    if (!gd.alive[p] || gd.sliding[p]) continue;
+    let ox = 0, oy = 0;
+    if (gd.bumpT[p] > 0) {
+      const k = Math.sin((1 - gd.bumpT[p] / balance.bumpDur) * Math.PI) * balance.bumpDist * bumpScale;
+      ox = DIRS[gd.pieces[p].dir][0] * k;
+      oy = DIRS[gd.pieces[p].dir][1] * k;
     }
+    drawPiece(c, gd, g, p, ox, oy);
   }
 
-  // Flights
-  const f = gd.flights;
-  for (let k = 0; k < f.active.length; k++) {
-    if (!f.active[k]) continue;
-    const dir = f.dir[k];
-    const x = g.bx + (f.c[k] + DIRS[dir][0] * f.dist[k]) * g.cell;
-    const y = g.by + (f.r[k] + DIRS[dir][1] * f.dist[k]) * g.cell;
-    c.drawImage(tileSprites[dir], x, y, g.cell, g.cell);
+  // Sliding pieces (drawn over resting ones)
+  for (let p = 0; p < gd.pieces.length; p++) {
+    if (gd.sliding[p]) drawSlidingPiece(c, gd, g, p);
   }
 
   c.restore();
 
   // Bottom buttons (outside the shake transform)
-  const hintDisabled = gd.gold < balance.hintCost || gd.hintIndex >= 0;
+  const hintDisabled = gd.gold < balance.hintCost || gd.hintPiece >= 0;
   drawButton(c, BUTTONS.game[0], false, hintDisabled, 'HINT · ' + balance.hintCost, FONT.bodyLarge);
   drawButton(c, BUTTONS.game[1], true, false, 'RESTART', FONT.bodyLarge);
   drawVersion(c, false);

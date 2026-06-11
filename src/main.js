@@ -1,7 +1,7 @@
 import { balance } from './balance.js';
 import { allocGameData } from './gameData.js';
 import { startLevel, nextLevel, tapCell, tick, useHint, refillHearts } from './logic.js';
-import { initSprites, render, hitTest } from './render.js';
+import { render, hitTest } from './render.js';
 import { findHint } from './generator.js';
 import { initAudio, sfx, suspendAudio, resumeAudio } from './audio.js';
 
@@ -130,7 +130,6 @@ async function boot() {
   // FIX 1: mark boot complete so pointerdown handler becomes active
   booted = true;
 
-  initSprites();
   refreshRect();
 
   // Screenshot mode: skip menus, show a busy mid-game board, play a few moves.
@@ -139,8 +138,13 @@ async function boot() {
     startLevel(gd, balance);
     let taps = 0;
     const auto = setInterval(() => {
-      const idx = findHint(gd.board, gd.cols, gd.rows);
-      if (idx >= 0) tapCell(gd, balance, idx % gd.cols, (idx / gd.cols) | 0);
+      const mask = new Uint8Array(gd.pieces.length);
+      for (let p = 0; p < gd.pieces.length; p++) mask[p] = gd.alive[p] && !gd.sliding[p] ? 1 : 0;
+      const idx = findHint(gd.pieces, gd.grid, gd.cols, gd.rows, mask);
+      if (idx >= 0) {
+        const head = gd.pieces[idx].cells[0];
+        tapCell(gd, balance, head % gd.cols, (head / gd.cols) | 0);
+      }
       if (++taps >= 3) clearInterval(auto);
     }, 800);
   }
