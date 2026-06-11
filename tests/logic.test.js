@@ -88,6 +88,14 @@ test('flights despawn and the level clears after the last arrow leaves', () => {
   assert.equal(gd.goldEarnedBonus, balance.flawlessBonus);
 });
 
+test('clearFade ramps to 1 after the clear transition', () => {
+  const gd = makeGd(1, 1, [[0, 0, 0]]);
+  assert.equal(tapCell(gd, balance, 0, 0), 'fly');
+  runTicks(gd, 3);
+  assert.equal(gd.screen, 'clear');
+  assert.equal(gd.clearFade, 1);
+});
+
 test('losing all hearts fails the level', () => {
   // (0,0) points right, permanently blocked by (1,0). Tap it 3 times.
   const gd = makeGd(2, 1, [[0, 0, 1], [1, 0, 0]]);

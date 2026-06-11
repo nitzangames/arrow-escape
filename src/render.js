@@ -187,7 +187,12 @@ function renderGame(c, gd, balance) {
   c.textAlign = 'right';
   c.fillText('● ' + gd.gold, W - 80, 180);
   for (let i = 0; i < balance.hearts; i++) {
-    drawHeart(c, W / 2 + (i - 1) * 100, 270, 64, i < gd.hearts ? THEME.accent : THEME.heartEmpty);
+    let color = i < gd.hearts ? THEME.accent : THEME.heartEmpty;
+    // The just-lost heart flashes while the shake plays.
+    if (i === gd.hearts && gd.shakeT > 0) {
+      color = Math.sin(gd.shakeT * 40) > 0 ? THEME.accent : THEME.heartEmpty;
+    }
+    drawHeart(c, W / 2 + (i - 1) * 100, 270, 64, color);
   }
 
   // Board panel + grid
@@ -260,6 +265,7 @@ function renderGame(c, gd, balance) {
 }
 
 function renderClear(c, gd) {
+  c.globalAlpha = gd.clearFade;
   c.fillStyle = THEME.overlay;
   c.fillRect(0, 0, W, H);
   c.fillStyle = THEME.ink;
@@ -274,6 +280,7 @@ function renderClear(c, gd) {
   }
   drawButton(c, BUTTONS.clear[0], false, false);
   drawVersion(c, true);
+  c.globalAlpha = 1;
 }
 
 function renderFail(c, gd, balance) {

@@ -18,6 +18,7 @@ export function startLevel(gd, balance) {
   gd.hintPulse = 0;
   gd.shakeT = 0;
   gd.clearTimer = 0;
+  gd.clearFade = 0;
   gd.failTimer = 0;
   gd.goldEarnedClear = 0;
   gd.goldEarnedBonus = 0;
@@ -75,6 +76,11 @@ export function tapCell(gd, balance, c, r) {
 // Callers must clamp dt (the rAF loop caps at 1/30 s) — a multi-second dt
 // from a tab restore would expire timers and snap flights in one tick.
 export function tick(gd, balance, dt) {
+  if (gd.screen === 'clear' && gd.clearFade < 1) {
+    gd.clearFade = Math.min(1, gd.clearFade + dt * 3);
+    gd.dirty = true;
+    return;
+  }
   if (gd.screen !== 'game') return;
   let animating = false;
 

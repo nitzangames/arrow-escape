@@ -26,8 +26,12 @@ function sdkLoad(key) {
 
 const gd = allocGameData(balance);
 
-function saveProgress() {
-  sdkSave('progress', JSON.stringify({ level: gd.level, gold: gd.gold, sound: gd.sound }));
+function saveProgress(levelOverride) {
+  sdkSave('progress', JSON.stringify({
+    level: levelOverride ?? gd.level,
+    gold: gd.gold,
+    sound: gd.sound,
+  }));
 }
 
 // --- input ---
@@ -64,7 +68,7 @@ function onButton(id) {
     case 'play': startLevel(gd, balance); break;
     case 'sound': gd.sound = !gd.sound; saveProgress(); break;
     case 'hint': if (useHint(gd, balance)) saveProgress(); break;
-    case 'restart': startLevel(gd, balance); break;
+    case 'restart': if (gd.remaining > 0) startLevel(gd, balance); break;
     case 'next': nextLevel(gd, balance); saveProgress(); break;
     case 'retry': startLevel(gd, balance); break;
     case 'refill': if (refillHearts(gd, balance)) saveProgress(); break;
@@ -83,7 +87,7 @@ function frame(t) {
   tick(gd, balance, dt);
   if (gd.screen === 'clear' && prevScreen !== 'clear') {
     sfx(gd, 'fanfare');
-    saveProgress();
+    saveProgress(gd.level + 1); // clearing banks the NEXT level — no re-farm on reload
   }
   prevScreen = gd.screen;
   if (!gd.dirty) return; // static screens render only when something changed

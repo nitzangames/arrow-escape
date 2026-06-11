@@ -32,6 +32,7 @@ export function allocGameData(balance) {
     hintPulse: 0,
     shakeT: 0,
     clearTimer: 0,
+    clearFade: 0,
     failTimer: 0,
     goldEarnedClear: 0,
     goldEarnedBonus: 0,
