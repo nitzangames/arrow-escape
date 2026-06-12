@@ -4,8 +4,8 @@ import { balance } from '../src/balance.js';
 import { allocGameData } from '../src/gameData.js';
 import { EMPTY, WALL } from '../src/generator.js';
 import {
-  startLevel, tapCell, tick, distToEdge,
-  awardClear, nextLevel, useHint, refillHearts,
+  startLevel, tapCell, tick, distToEdge, heartTick, grantAdHeart, buyGoldPack,
+  awardClear, nextLevel, useHint, refillHearts, openShop, closeShop,
 } from '../src/logic.js';
 
 // Build a gd with hand-crafted pieces (bypasses the generator).
@@ -38,6 +38,7 @@ function runTicks(gd, seconds) {
 test('startLevel produces a playable, completely filled snake board', () => {
   const gd = allocGameData(balance);
   gd.level = 3;
+  gd.hearts = 2;
   startLevel(gd, balance);
   assert.equal(gd.screen, 'game');
   assert.ok(gd.cols > 0 && gd.rows > 0);
@@ -46,7 +47,7 @@ test('startLevel produces a playable, completely filled snake board', () => {
   assert.ok(gd.pieces.length > 0);
   assert.equal(gd.remaining, gd.pieces.length);
   assert.equal(gd.alive.length, gd.pieces.length);
-  assert.equal(gd.hearts, balance.hearts);
+  assert.equal(gd.hearts, 2, 'startLevel must not touch the persistent heart pool');
   assert.equal(gd.flawless, true);
   assert.equal(gd.hintPiece, -1);
 });
@@ -71,7 +72,7 @@ test('blocked snake bumps and costs a heart; inert cases return none', () => {
     { cells: [1, 2], dir: 3 },
   ]);
   assert.equal(tapCell(gd, balance, 2, 0), 'bump'); // tap piece 1's tail → bump
-  assert.equal(gd.hearts, balance.hearts - 1);
+  assert.equal(gd.hearts, balance.heartCap - 1);
   assert.equal(gd.flawless, false);
   assert.ok(gd.bumpT[1] > 0);
   assert.ok(gd.shakeT > 0);
@@ -127,16 +128,18 @@ test('slides despawn and the level clears after the last piece leaves', () => {
   assert.equal(gd.gold, goldBefore + balance.goldPerClear + balance.flawlessBonus);
 });
 
-test('losing all hearts fails the level', () => {
-  // 2×1 mutual block: tap piece 0 three times
+test('hearts hitting 0 gates the level and resets the per-gate ad flag', () => {
   const gd = makeGd(2, 1, [
     { cells: [0], dir: 1 },
     { cells: [1], dir: 3 },
   ]);
+  gd.hearts = 2;
+  gd.adUsedThisGate = true; // stale from a previous gating
   tapCell(gd, balance, 0, 0); runTicks(gd, 0.3);
-  tapCell(gd, balance, 0, 0); runTicks(gd, 0.3);
+  assert.equal(gd.hearts, 1);
   assert.equal(tapCell(gd, balance, 0, 0), 'bump');
   assert.equal(gd.hearts, 0);
+  assert.equal(gd.adUsedThisGate, false, 'entering the gate re-arms the ad button');
   assert.ok(gd.failTimer > 0);
   runTicks(gd, 1);
   assert.equal(gd.screen, 'fail');
@@ -167,22 +170,31 @@ test('useHint charges gold and marks a free piece exactly once', () => {
   assert.equal(gd.gold, 100);
 });
 
-test('refillHearts only works on the fail screen and charges gold', () => {
+test('refillHearts works from the gate and the menu, fills to cap, clears the timer', () => {
   const gd = makeGd(2, 1, [
     { cells: [0], dir: 1 },
     { cells: [1], dir: 3 },
   ]);
   gd.gold = 100;
-  assert.equal(refillHearts(gd, balance), false);
+  gd.hearts = 2;
+  assert.equal(refillHearts(gd, balance), false, 'not from the game screen');
   gd.screen = 'fail';
   gd.hearts = 0;
+  gd.heartT = 12345;
   assert.equal(refillHearts(gd, balance), true);
   assert.equal(gd.gold, 100 - balance.refillCost);
-  assert.equal(gd.hearts, balance.hearts);
-  assert.equal(gd.screen, 'game');
+  assert.equal(gd.hearts, balance.heartCap);
+  assert.equal(gd.heartT, null);
+  assert.equal(gd.screen, 'game', 'continues the board in place');
+  gd.screen = 'menu';
+  gd.hearts = 1;
+  assert.equal(refillHearts(gd, balance), true, 'menu refill below cap allowed');
+  assert.equal(gd.screen, 'menu');
+  assert.equal(refillHearts(gd, balance), false, 'already at cap');
   gd.screen = 'fail';
+  gd.hearts = 0;
   gd.gold = balance.refillCost - 1;
-  assert.equal(refillHearts(gd, balance), false);
+  assert.equal(refillHearts(gd, balance), false, 'insufficient gold');
   assert.equal(gd.screen, 'fail');
 });
 
@@ -199,10 +211,11 @@ test('nextLevel advances and regenerates', () => {
   const gd = allocGameData(balance);
   gd.level = 4;
   startLevel(gd, balance);
+  gd.hearts = 3;
   nextLevel(gd, balance);
   assert.equal(gd.level, 5);
   assert.equal(gd.screen, 'game');
-  assert.equal(gd.hearts, balance.hearts);
+  assert.equal(gd.hearts, 3, 'hearts persist across levels');
   assert.ok(gd.remaining > 0);
 });
 
@@ -210,6 +223,87 @@ test('tapping a wall cell is inert', () => {
   const gd = makeGd(2, 1, [{ cells: [0], dir: 3 }]);
   gd.grid[1] = WALL;
   assert.equal(tapCell(gd, balance, 1, 0), 'none');
-  assert.equal(gd.hearts, balance.hearts);
+  assert.equal(gd.hearts, balance.heartCap);
   assert.equal(gd.remaining, 1);
+});
+
+test('heartTick: regen math with injected timestamps', () => {
+  const gd = makeGd(1, 1, [{ cells: [0], dir: 0 }]);
+  const HOUR = balance.heartRegenMs;
+  // at cap: no timer
+  gd.hearts = balance.heartCap;
+  gd.heartT = 999;
+  assert.equal(heartTick(gd, balance, 1000), true);
+  assert.equal(gd.heartT, null);
+  // below cap, no timer -> timer starts one hour out
+  gd.hearts = 2;
+  assert.equal(heartTick(gd, balance, 5000), true);
+  assert.equal(gd.heartT, 5000 + HOUR);
+  // not yet due -> nothing
+  assert.equal(heartTick(gd, balance, 5000 + HOUR - 1), false);
+  assert.equal(gd.hearts, 2);
+  // due -> +1, timer advances by exactly one hour (no drift)
+  assert.equal(heartTick(gd, balance, 5000 + HOUR + 250), true);
+  assert.equal(gd.hearts, 3);
+  assert.equal(gd.heartT, 5000 + 2 * HOUR);
+  // long absence -> grants up to cap, timer cleared
+  assert.equal(heartTick(gd, balance, 5000 + 10 * HOUR), true);
+  assert.equal(gd.hearts, balance.heartCap);
+  assert.equal(gd.heartT, null);
+});
+
+test('heartTick auto-resumes a gated level when a heart arrives', () => {
+  const gd = makeGd(2, 1, [
+    { cells: [0], dir: 1 },
+    { cells: [1], dir: 3 },
+  ]);
+  gd.screen = 'fail';
+  gd.hearts = 0;
+  gd.heartT = 1000;
+  assert.equal(heartTick(gd, balance, 2000), true);
+  assert.equal(gd.hearts, 1);
+  assert.equal(gd.screen, 'game', 'gate lifts the moment a heart regenerates');
+  assert.equal(gd.failTimer, 0);
+});
+
+test('grantAdHeart: +1, once per gating, resumes the board', () => {
+  const gd = makeGd(2, 1, [
+    { cells: [0], dir: 1 },
+    { cells: [1], dir: 3 },
+  ]);
+  gd.screen = 'fail';
+  gd.hearts = 0;
+  gd.adUsedThisGate = false;
+  assert.equal(grantAdHeart(gd, balance), true);
+  assert.equal(gd.hearts, 1);
+  assert.equal(gd.screen, 'game');
+  assert.equal(gd.adUsedThisGate, true);
+  assert.equal(grantAdHeart(gd, balance), false, 'only one ad heart per gating');
+  gd.adUsedThisGate = false;
+  gd.hearts = balance.heartCap;
+  assert.equal(grantAdHeart(gd, balance), false, 'no grant at cap');
+});
+
+test('buyGoldPack adds the pack gold', () => {
+  const gd = makeGd(1, 1, [{ cells: [0], dir: 0 }]);
+  gd.gold = 10;
+  buyGoldPack(gd, balance, 1);
+  assert.equal(gd.gold, 10 + balance.goldPacks[1].gold);
+});
+
+test('openShop/closeShop round-trip and preserve a gated board', () => {
+  const gd = makeGd(2, 1, [
+    { cells: [0], dir: 1 },
+    { cells: [1], dir: 3 },
+  ]);
+  gd.screen = 'fail';
+  openShop(gd);
+  assert.equal(gd.screen, 'shop');
+  assert.equal(gd.shopFrom, 'fail');
+  closeShop(gd);
+  assert.equal(gd.screen, 'fail');
+  gd.screen = 'menu';
+  openShop(gd);
+  closeShop(gd);
+  assert.equal(gd.screen, 'menu');
 });

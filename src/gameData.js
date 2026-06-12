@@ -2,7 +2,7 @@
 // are reallocated in startLevel (level start, not per-frame — allowed).
 export function allocGameData(balance) {
   return {
-    screen: 'menu', // 'menu' | 'game' | 'clear' | 'fail'
+    screen: 'menu', // 'menu' | 'game' | 'clear' | 'fail' (= out of hearts) | 'shop'
     level: 1,
     gold: balance.startGold,
     sound: true,
@@ -19,7 +19,13 @@ export function allocGameData(balance) {
     bumpT: null,     // Float32Array per piece: bump animation countdown
     slidingCount: 0,
     remaining: 0,    // pieces not yet tapped free
-    hearts: balance.hearts,
+    hearts: balance.heartCap,
+    heartT: null,           // epoch ms of the next heart regen; null at cap
+    adUsedThisGate: false,  // one rewarded-ad heart per out-of-hearts gating
+    adsAvailable: true,     // set by main at boot from PlaySDK.adsAvailable
+    nowMs: 0,               // stamped by main each frame; render-only countdowns
+    shopFrom: 'menu',       // screen to return to when the shop closes
+    shopMsg: '',            // transient purchase feedback ("+150 gold!" / cancelled)
     flawless: true,
 
     hintPiece: -1,

@@ -1,4 +1,4 @@
-export const VERSION = 'v0.1.24';
+export const VERSION = 'v0.1.25';
 
 export const balance = {
   canvasW: 1080,
@@ -27,13 +27,20 @@ export const balance = {
   openBracketSpan: 100,   // virtual length of the final (Infinity) bracket
   scoreWeights: { wave: 1.0, blocked: 6.0, count: 0.05 },
 
-  hearts: 3,
+  heartCap: 5,            // persistent heart pool (carries across levels)
+  heartRegenMs: 3600000,  // +1 heart per hour, up to the cap
 
   startGold: 60,
   goldPerClear: 10,
   flawlessBonus: 5,
   hintCost: 25,
   refillCost: 50,
+  // NBucks → gold packs (100 NBucks = $1). itemId goes to purchase analytics.
+  goldPacks: [
+    { id: 'gold-small', gold: 150, nbucks: 15 },
+    { id: 'gold-medium', gold: 500, nbucks: 40 },
+    { id: 'gold-large', gold: 1500, nbucks: 100 },
+  ],
 
   flySpeed: 14,           // cells/s at launch
   flyAccel: 50,           // cells/s²
