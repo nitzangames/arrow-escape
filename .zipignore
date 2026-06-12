@@ -5,3 +5,5 @@ tests/*
 GDD.md
 package.json
 .zipignore
+.superpowers/*
+.gitignore
