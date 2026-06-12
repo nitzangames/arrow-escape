@@ -15,9 +15,10 @@ const heartIn = (x, y) => {
 export const SHAPES = {
   heart:     { inside: heartIn, bbox: [-1.139, 1.139, -1.0, 1.236] },
   // 1.3 (not the pointier 1.02): 4-wide tips are the narrowest the tiler can
-  // reliably pack at 10x14 — 1.02 leaves 32 dead cells and never packs. A few
-  // % of candidates may still fail; the 8-candidate pool absorbs that.
-  diamond:   { inside: (x, y) => Math.abs(x) + Math.abs(y) <= 1.3, bbox: [-1, 1, -1, 1] },
+  // reliably pack — and only up to 10x14: beyond that the stair corners
+  // multiply (97% packing failure at 12x16), so the diamond carries a
+  // dimension cap that maskFor applies before sampling.
+  diamond:   { inside: (x, y) => Math.abs(x) + Math.abs(y) <= 1.3, bbox: [-1, 1, -1, 1], cap: [10, 14] },
   plus:      { inside: (x, y) => Math.abs(x) <= 0.34 || Math.abs(y) <= 0.34, bbox: [-1, 1, -1, 1] },
   donut:     { inside: (x, y) => !(Math.abs(x) <= 0.45 && Math.abs(y) <= 0.45), bbox: [-1, 1, -1, 1] },
   // Waist floor 0.12 keeps a 2-cell waist on 10-wide boards; the schedule
@@ -39,7 +40,12 @@ export function shapeFor(level, balance) {
 // Sample a shape over a cols×rows grid, trim empty border rows/cols.
 // Returns { cols, rows, mask } — mask is a Uint8Array, 1 = playable cell.
 export function maskFor(shapeKey, cols, rows) {
-  const { inside, bbox: [x0, x1, y0, y1] } = SHAPES[shapeKey];
+  const shape = SHAPES[shapeKey];
+  if (shape.cap) {
+    cols = Math.min(cols, shape.cap[0]);
+    rows = Math.min(rows, shape.cap[1]);
+  }
+  const { inside, bbox: [x0, x1, y0, y1] } = shape;
   let m = [];
   for (let r = 0; r < rows; r++) {
     const row = [];

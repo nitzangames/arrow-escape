@@ -100,3 +100,10 @@ test('SHAPE_ORDER covers exactly the six shapes', () => {
     ['diamond', 'donut', 'heart', 'hourglass', 'plus', 'triangle']);
   for (const key of SHAPE_ORDER) assert.ok(SHAPES[key]);
 });
+
+test('the diamond mask is capped at 10x14 regardless of requested dims', () => {
+  const m = maskFor('diamond', 12, 16);
+  assert.ok(m.cols <= 10 && m.rows <= 14, `got ${m.cols}x${m.rows}`);
+  const small = maskFor('diamond', 8, 12); // below the cap: unaffected
+  assert.ok(small.cols <= 8 && small.rows <= 12);
+});

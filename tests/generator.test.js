@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { balance } from '../src/balance.js';
 import {
-  EMPTY, WALL, DIRS, mulberry32, levelSeed, rampFor, rayClear,
-  buildBoard, simulateWaves, scoreBoard, isBreather,
+  EMPTY, WALL, DIRS, mulberry32, levelSeed, waveFor, rayClear,
+  buildBoard, simulateWaves, scoreBoard,
   pickIndexForLevel, generateLevel, findHint,
 } from '../src/generator.js';
 import { maskFor, shapeFor } from '../src/shapes.js';
@@ -66,11 +66,20 @@ test('levelSeed differs across levels and candidates', () => {
   assert.notEqual(levelSeed(1, 0), levelSeed(1, 1));
 });
 
-test('rampFor returns the right bracket', () => {
-  assert.deepEqual(rampFor(1, balance), { cols: 5, rows: 7, minLen: 1, maxLen: 4, longBias: 0 });
-  assert.deepEqual(rampFor(4, balance), { cols: 6, rows: 9, minLen: 1, maxLen: 5, longBias: 0.2 });
-  assert.deepEqual(rampFor(20, balance), { cols: 10, rows: 14, minLen: 1, maxLen: 7, longBias: 0.6 });
-  assert.deepEqual(rampFor(61, balance), { cols: 10, rows: 14, minLen: 1, maxLen: 7, longBias: 0.7 });
+test('waveFor: tutorial, wave interpolation, tier ceilings', () => {
+  assert.deepEqual(waveFor(1, balance),
+    { cols: 5, rows: 7, minLen: 2, maxLen: 5, longBias: 0, t: 0, tutorial: true });
+  const start = waveFor(4, balance); // wave start = tier floor
+  assert.equal(start.t, 0);
+  assert.deepEqual([start.cols, start.rows, start.maxLen], [7, 10, 6]);
+  const peak = waveFor(11, balance); // last level of the wave = tier peak
+  assert.equal(peak.t, 1);
+  assert.deepEqual([peak.cols, peak.rows, peak.maxLen], [10, 14, 12]);
+  const next = waveFor(12, balance); // next wave drops back to the floor
+  assert.equal(next.t, 0);
+  assert.deepEqual([next.cols, next.rows, next.maxLen], [7, 10, 6]);
+  const t3 = waveFor(67, balance); // tier-3 peak: (67-4)%8 = 7 -> t = 1
+  assert.deepEqual([t3.cols, t3.rows, t3.maxLen, t3.longBias], [12, 16, 16, 0.6]);
 });
 
 test('rayClear sees other pieces but exempts own body', () => {
@@ -160,20 +169,13 @@ test('scoreBoard ranks a forced chain above a free spread; empty board is 0', ()
   assert.equal(scoreBoard([], new Int16Array(16).fill(EMPTY), 4, 4, w), 0);
 });
 
-test('isBreather flags every 5th level except level 1', () => {
-  assert.ok(isBreather(10, balance));
-  assert.ok(isBreather(25, balance));
-  assert.ok(!isBreather(11, balance));
-  assert.ok(!isBreather(1, balance));
-});
-
-test('pickIndexForLevel: breathers take the easiest candidate, ramp rises within a bracket', () => {
-  const scores = [5, 9, 1, 7, 3, 8, 2, 6];
-  assert.equal(pickIndexForLevel(10, scores, balance), 2);
-  const early = pickIndexForLevel(31, scores, balance);
-  const late = pickIndexForLevel(59, scores, balance);
-  assert.ok(scores[late] > scores[early]);
-  assert.equal(pickIndexForLevel(31, scores, balance), early);
+test('pickIndexForLevel climbs the wave from gentle to the hardest candidate', () => {
+  const scores = [5, 9, 1, 7, 3, 8, 2, 6, 4, 10];
+  // sorted candidate order by score: idx 2(1) 6(2) 4(3) 8(4) 0(5) 7(6) 3(7) 5(8) 1(9) 9(10)
+  assert.equal(pickIndexForLevel(1, scores, balance), 2,  'tutorial -> easiest');
+  assert.equal(pickIndexForLevel(4, scores, balance), 8,  'wave start -> p=0.3 -> order[3]');
+  assert.equal(pickIndexForLevel(8, scores, balance), 3,  't=4/7 -> p=0.7 -> order[6]');
+  assert.equal(pickIndexForLevel(11, scores, balance), 9, 'wave peak -> hardest');
 });
 
 test('generateLevel is deterministic, full, and always solvable', () => {
@@ -182,7 +184,7 @@ test('generateLevel is deterministic, full, and always solvable', () => {
     const g2 = generateLevel(level, balance);
     assert.deepEqual(g1.pieces, g2.pieces, `level ${level} not deterministic`);
     assert.deepEqual(Array.from(g1.grid), Array.from(g2.grid));
-    const { maxLen } = rampFor(level, balance);
+    const { maxLen } = waveFor(level, balance);
     assertWellFormed(g1, g1.cols, g1.rows, maxLen);
     const { cleared } = simulateWaves(g1.pieces, g1.grid, g1.cols, g1.rows);
     assert.ok(cleared, `level ${level} not solvable`);
@@ -197,19 +199,18 @@ test('generation never wedges across the whole early game', () => {
   }
 });
 
-test('breather boards are genuinely easier than neighbors in the wide brackets', () => {
-  // Early brackets are 3-5 levels wide (at most one breather each) — too few
-  // for a stable mean, so compare within the two wide 10x14 brackets only.
-  const brackets = [[20, 60], [61, 160]];
-  for (const [lo, hi] of brackets) {
-    let bSum = 0, bN = 0, nSum = 0, nN = 0;
-    for (let lvl = lo; lvl <= hi; lvl++) {
-      const s = generateLevel(lvl, balance).score;
-      if (isBreather(lvl, balance)) { bSum += s; bN++; } else { nSum += s; nN++; }
-    }
-    assert.ok(bSum / bN < nSum / nN,
-      `bracket ${lo}-${hi}: breather mean ${bSum / bN} not below normal mean ${nSum / nN}`);
-  }
+test('difficulty waves: within-wave rise, wave-start dip, tier growth, gentle tutorial', () => {
+  const score = (lvl) => generateLevel(lvl, balance).score;
+  let startSum = 0, peakSum = 0;
+  for (const w of [4, 12, 20]) { startSum += score(w); peakSum += score(w + 7); }
+  assert.ok(peakSum / 3 > startSum / 3, 'tier-1 wave peaks above wave starts');
+  assert.ok(score(12) < score(11), 'a new wave dips below the previous peak');
+  let t1 = 0, t3 = 0;
+  for (const w of [11, 19, 27]) t1 += score(w);
+  for (const w of [67, 75, 83]) t3 += score(w);
+  assert.ok(t3 / 3 > t1 / 3, 'tier-3 peaks harder than tier-1 peaks');
+  const tut = Math.max(score(1), score(2), score(3));
+  assert.ok(tut < startSum / 3, 'tutorial below tier-1 wave starts');
 });
 
 test('findHint returns the only free piece', () => {
@@ -249,14 +250,15 @@ test('findHint returns -1 on an empty board, never mutates, and respects alive',
 test('level 10 is the heart: mask applied, full, solvable, deterministic', () => {
   const g = generateLevel(10, balance);
   assert.equal(g.shape, 'heart');
-  const m = maskFor('heart', 7, 10); // level 10 bracket dims
+  const w = waveFor(10, balance);
+  const m = maskFor('heart', w.cols, w.rows); // dims come from the wave now
   assert.equal(g.cols, m.cols);
   assert.equal(g.rows, m.rows);
   for (let i = 0; i < m.mask.length; i++) {
     if (m.mask[i]) assert.notEqual(g.grid[i], WALL, `cell ${i} should be playable`);
     else assert.equal(g.grid[i], WALL, `cell ${i} should be a wall`);
   }
-  assertWellFormed(g, g.cols, g.rows, rampFor(10, balance).maxLen);
+  assertWellFormed(g, g.cols, g.rows, waveFor(10, balance).maxLen);
   assert.ok(simulateWaves(g.pieces, g.grid, g.cols, g.rows).cleared);
   assert.deepEqual(generateLevel(10, balance).pieces, g.pieces);
 });
@@ -268,7 +270,7 @@ test('every shaped level through 100 is shaped, full, and solvable', () => {
     let walls = 0;
     for (const v of g.grid) if (v === WALL) walls++;
     assert.ok(walls > 0, `level ${lvl} has no walls`);
-    assertWellFormed(g, g.cols, g.rows, rampFor(lvl, balance).maxLen);
+    assertWellFormed(g, g.cols, g.rows, waveFor(lvl, balance).maxLen);
     assert.ok(simulateWaves(g.pieces, g.grid, g.cols, g.rows).cleared, `level ${lvl} not solvable`);
   }
 });

@@ -39,9 +39,30 @@ export function levelSeed(level, candidate) {
   return ((level * 374761393 + candidate * 668265263) ^ 0x9E3779B9) >>> 0;
 }
 
-export function rampFor(level, balance) {
-  for (const [maxLevel, cols, rows, minLen, maxLen, longBias] of balance.ramp) {
-    if (level <= maxLevel) return { cols, rows, minLen, maxLen, longBias };
+// Wave parameters for a level. Tutorial levels (< waveStart) use the fixed
+// gentle settings at t = 0. From waveStart, t sweeps 0 -> 1 across each
+// wavePeriod levels, and board dims / maxLen interpolate from the level's
+// tier floor to its peak — the difficulty wave: gradually harder, then easy
+// again, then harder, with ceilings rising across tiers.
+export function waveFor(level, balance) {
+  if (level < balance.waveStart) {
+    const tut = balance.tutorial;
+    return {
+      cols: tut.cols, rows: tut.rows, minLen: tut.minLen, maxLen: tut.maxLen,
+      longBias: 0, t: 0, tutorial: true,
+    };
+  }
+  const t = ((level - balance.waveStart) % balance.wavePeriod) / (balance.wavePeriod - 1);
+  for (const [maxLevel, fc, fr, fl, pc, pr, pl, longBias] of balance.tiers) {
+    if (level <= maxLevel) {
+      return {
+        cols: Math.round(fc + (pc - fc) * t),
+        rows: Math.round(fr + (pr - fr) * t),
+        minLen: balance.minLen,
+        maxLen: Math.round(fl + (pl - fl) * t),
+        longBias, t, tutorial: false,
+      };
+    }
   }
 }
 
@@ -326,32 +347,14 @@ export function scoreBoard(pieces, grid, cols, rows, weights) {
   return waves * weights.wave + (1 - freeRatio) * weights.blocked + pieces.length * weights.count;
 }
 
-export function isBreather(level, balance) {
-  return level > 1 && level % balance.breatherEvery === 0;
-}
-
-// Bracket [start..end] containing `level` (end of the open last bracket is
-// virtualized to openBracketSpan levels).
-export function bracketRange(level, balance) {
-  let start = 1;
-  for (const [maxLevel] of balance.ramp) {
-    if (level <= maxLevel) {
-      const end = maxLevel === Infinity ? start + balance.openBracketSpan - 1 : maxLevel;
-      return { start, end };
-    }
-    start = maxLevel + 1;
-  }
-}
-
-// Difficulty is distribution-relative: rank candidates by score, then pick
-// by percentile — breathers take the easiest candidate, normal levels ramp
-// from percentileMin to percentileMax across their bracket.
+// Pick a candidate by percentile at the wave position: tutorial levels take
+// the easiest board; wave levels climb from wavePercentileMin at a wave's
+// start to 1.0 at its peak — the hardest board the pool produced.
 export function pickIndexForLevel(level, scores, balance) {
   const order = scores.map((s, i) => i).sort((a, b) => scores[a] - scores[b] || a - b);
-  if (isBreather(level, balance)) return order[0];
-  const { start, end } = bracketRange(level, balance);
-  const pos = end > start ? Math.min((level - start) / (end - start), 1) : 1;
-  const p = balance.percentileMin + (balance.percentileMax - balance.percentileMin) * pos;
+  const { t, tutorial } = waveFor(level, balance);
+  if (tutorial) return order[0];
+  const p = balance.wavePercentileMin + (1 - balance.wavePercentileMin) * t;
   return order[Math.round(p * (order.length - 1))];
 }
 
@@ -361,10 +364,10 @@ export function pickIndexForLevel(level, scores, balance) {
 // failed (null — not observed since tile-then-peel; skipped
 // deterministically) are simply left out of the pool.
 export function generateLevel(level, balance) {
-  const { cols: rampCols, rows: rampRows, minLen, maxLen, longBias } = rampFor(level, balance);
+  const { cols: waveCols, rows: waveRows, minLen, maxLen, longBias } = waveFor(level, balance);
   const shape = shapeFor(level, balance);
-  let cols = rampCols, rows = rampRows, mask = null;
-  if (shape) ({ cols, rows, mask } = maskFor(shape, rampCols, rampRows));
+  let cols = waveCols, rows = waveRows, mask = null;
+  if (shape) ({ cols, rows, mask } = maskFor(shape, waveCols, waveRows));
   const boards = [];
   const scores = [];
   for (let k = 0; k < balance.candidates; k++) {
