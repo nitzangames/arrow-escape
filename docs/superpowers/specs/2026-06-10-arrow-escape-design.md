@@ -1,6 +1,6 @@
 # Arrow Escape — Design Spec (GDD)
 
-Date: 2026-06-10 · rev 4 (2026-06-11): custom board shapes (heart, diamond, plus, donut, hourglass, triangle) every 3rd level from level 10; boards 2× bigger (5×7 → 10×14 by level 20)
+Date: 2026-06-10 · rev 5 (2026-06-12): monetization — persistent hearts (cap 5, 1/hour regen), rewarded-ad/gold refill gate, gold-for-NBucks shop. rev 4 (2026-06-11): custom board shapes; boards 2× bigger
 Status: approved design
 Platform: nitzan.games (1080×1920 portrait canvas, sandboxed iframe, PlaySDK)
 Slug: `arrow-escape` · Title: **Arrow Escape**
@@ -20,8 +20,8 @@ Slug: `arrow-escape` · Title: **Arrow Escape**
 - **Shaped boards:** most levels are rectangles, but from level 10 every 3rd level (10, 13, 16, …) uses a shaped mask, cycling deterministically through six shapes: heart → diamond → plus → donut → hourglass → triangle. Cells outside the shape are `WALL`: they block rays exactly like pieces, hold no pieces, take no taps, and draw nothing — the board silhouette *is* the shape. Shaped boards have fewer playable cells than their rectangle peers, which makes them a slightly lighter change of pace.
 - **Shape masks are geometric:** each shape is an implicit inside/outside formula sampled at cell centers over the formula's bounding box (in `shapes.js`), so the same six formulas produce clean shapes at every board size in the ramp — no hand-authored grids.
 - **Tap any cell of a piece:** if the straight ray of cells from the **head** to the board edge (in the arrowhead's direction) is free of *other* pieces, the whole snake slides out — the head travels straight along the ray and the body follows the head's track (train-style), straightening as it exits.
-- If another piece sits on that ray, the tapped piece **bumps**: it nudges toward the blocker and bounces back, and the player loses **1 of 3 hearts** (screen shake + bump sound + heart flash on the lost heart).
-- Clear all pieces → **level clear**. Lose all 3 hearts → **level failed**.
+- If another piece sits on that ray, the tapped piece **bumps**: it nudges toward the blocker and bounces back, and the player loses **1 heart** (screen shake + bump sound + heart flash on the lost heart). Hearts are a persistent pool (see §2) — losing one on level 5 means starting level 6 with one fewer.
+- Clear all pieces → **level clear**. Hearts at 0 → the **out-of-hearts gate** (§2).
 - Pieces already sliding off the board no longer block rays (their grid cells are freed the moment the slide starts).
 - Mistakes never deadlock a board: removing pieces only opens rays, so any reachable state of a solvable board is still solvable, and at least one free piece always exists.
 
@@ -65,19 +65,43 @@ Selection percentile rises smoothly within each bracket and drops to the floor o
 
 - **Endless sequential levels** 1, 2, 3, … No level select in v1; the menu shows "Level N" and Play resumes there.
 - **Gold** (game-minted soft currency per platform convention; NBucks never minted in-game):
-  - +10 gold per level clear, +5 bonus for a flawless clear (no hearts lost).
+  - +10 gold per level clear, +5 bonus for a flawless clear (no hearts lost during the level).
   - New players start with 60 gold.
 - **Hint — 25 gold:** highlights a currently-free arrow, preferring the one whose removal unblocks the most other arrows. (Always available because a free arrow always exists.)
-- **Heart refill — 50 gold:** offered on the fail overlay; refills to 3 hearts and continues the same board in place.
-- **Deferred to later versions:** NBucks→gold packs in the platform shop, daily challenges, streaks, level select, additional themes.
+
+### Hearts (persistent lives, the monetization driver)
+
+- Hearts are a **persistent pool**, not per-level state: cap **5**, new players start full, every bump costs 1 wherever it happens, and `startLevel` does NOT refill. Old saves (no hearts field) migrate to a full 5.
+- **Regen: +1 heart per hour**, up to the cap, tracked client-side: the save stores `heartT` (epoch ms when the next heart arrives; null at cap). Regen applies at boot and during play via a once-per-second check — a heart can arrive mid-level. Device-clock cheating is accepted for v1 (genre standard; no server state available).
+- **Out-of-hearts gate** — reaching 0 hearts mid-level shows the OUT OF HEARTS overlay; 0 hearts on the menu disables PLAY and shows the regen countdown. Both offer:
+  - **Watch ad → +1 heart** via `PlaySDK.showRewardedAd()` (mid-level: continue the same board in place). At most one ad grant per gating (the button disappears after use until the player is gated again). Button hidden when `PlaySDK.adsAvailable` is false and no dev fallback applies; per platform docs, web grants the reward without showing an ad.
+  - **Full refill · 50 gold** → hearts to 5 (mid-level: continue in place).
+  - **Get gold** → opens the shop. Or just wait: the countdown to the next heart is shown.
+- Retry replays the identical board (deterministic seeds) but requires ≥1 heart.
+
+### Gold shop (NBucks → gold; 100 NBucks = $1)
+
+Reachable from the menu and from the out-of-hearts overlay. Three packs (constants in `balance.js`):
+
+| Pack | Gold | NBucks | Real value |
+|------|------|--------|------------|
+| Small  | 150  | 15  | $0.15 |
+| Medium | 500  | 40  | $0.40 |
+| Large  | 1500 | 100 | $1.00 |
+
+Each purchase calls `PlaySDK.nbucks.spend({ amount, itemDescription, itemId })` inside try/catch. **Platform pitfalls (documented, real):** the method is exactly `PlaySDK.nbucks.spend` (a misnamed call fails silently — Bubble Bloom shipped a dead shop this way), and the promise **rejects** on cancel/insufficient funds rather than resolving with a failure flag — any rejection means nothing was charged; show a neutral "purchase cancelled" state, never an error.
+
+**Dev fallback (no PlaySDK):** purchases succeed for free and rewarded ads auto-grant, so all flows are testable locally and in Playwright.
+
+- **Deferred to later versions:** daily challenges, streaks, level select, additional themes.
 
 ### Save data (via `PlaySDK.save/load`, never raw localStorage)
 
 ```json
-{ "level": 12, "gold": 145, "sound": true }
+{ "level": 12, "gold": 145, "sound": true, "hearts": 3, "heartT": 1781300000000 }
 ```
 
-Loaded with top-level `await` at boot before the menu is constructed.
+Loaded with top-level `await` at boot before the menu is constructed. Missing fields default to: hearts 5, heartT null (saves from before rev 5 migrate cleanly).
 
 ## 3. Screens & UI
 
@@ -85,10 +109,11 @@ Loaded with top-level `await` at boot before the menu is constructed.
 
 **Board rendering is per-cell:** every playable (non-`WALL`) cell draws its own small rounded background tile; wall cells draw nothing, so the board silhouette is the shape itself (rectangles keep looking like the old panel, just with per-cell texture instead of grid lines). Hit-testing returns nothing for wall cells, and `tapCell` treats any negative grid value (`EMPTY` or `WALL`) as inert.
 
-1. **Menu** — title, "Level N", Play (primary CTA), sound toggle, gold balance, version caption (bottom center, Caption size).
-2. **Game** — HUD top: level number, hearts (3 heart icons), gold balance; board centered; bottom bar: Hint button (shows 25g cost), Restart button. Version caption in a corner.
+1. **Menu** — title, "Level N", Play (primary CTA; disabled with countdown when hearts = 0, with ad/refill offers), hearts row with regen countdown when below cap, Shop button, sound toggle, gold balance, version caption (bottom center, Caption size).
+2. **Game** — HUD top: level number, hearts (5 heart icons, smaller than the old 3), gold balance; board centered; bottom bar: Hint button (shows 25g cost), Restart button. Version caption in a corner.
 3. **Level clear overlay** — "LEVEL CLEAR" (Display), gold earned breakdown, Next button.
-4. **Fail overlay** — "OUT OF HEARTS" (Display), Retry (free) and "Continue · 50 gold" buttons, identical sizes.
+4. **Out-of-hearts overlay** — "OUT OF HEARTS" (Display), regen countdown, then: "Watch ad · +1 ♥" (hidden after one use per gating or when ads unavailable), "Refill · 50 gold", "Get gold" (opens shop), "Menu". Identical sizes for same-purpose buttons.
+5. **Shop screen** — three gold packs with gold amount, NBucks price; purchase calls the SDK and shows a brief success/cancelled state; Back button.
 
 UI rules: canvas-drawn UI using the type-ladder steps (canvas-px equivalents per JSGames convention: Display 144 / Title 126 / Heading 90 / Subheading 66 / Body Large 48 / Body 36 / Caption 21); same-purpose buttons identical in size; menu/overlay rendering throttled when nothing animates.
 
@@ -127,9 +152,12 @@ ArrowEscape/
 
 ### Error handling
 
-- Save load failure / empty → defaults (level 1, 60 gold, sound on).
+- Save load failure / empty → defaults (level 1, 60 gold, sound on, 5 hearts, no regen timer).
 - Generator guard: full coverage is a hard invariant — a board that can't be packed restarts (bounded, deterministic); a candidate seed that exhausts its restarts is excluded from the candidate pool rather than shipped underfilled.
 - Hint with insufficient gold → button disabled state (greyed, shows cost).
+- `PlaySDK.nbucks.spend` rejection (cancel / insufficient funds) → neutral "purchase cancelled" state; nothing granted, nothing saved.
+- `PlaySDK.showRewardedAd()` resolving `{rewarded: false}` (ad abandoned) → no heart granted; the ad button remains usable for this gating.
+- `heartT` in the past at boot (game closed for hours) → grant all elapsed hearts up to the cap in one step.
 
 ### Testing
 
@@ -141,9 +169,10 @@ ArrowEscape/
 3b. **Shape correctness** — shaped levels carry the scheduled shape's mask; the mask sampler produces the expected silhouettes at ramp sizes (golden-grid assertions for at least heart at 10×14 and 5×7); shaped boards are solvable; `tapCell` on a wall cell is inert.
 4. **Ramp sanity** — average difficulty score over levels 1–300 is monotonically increasing per bracket; every 5th level scores below its neighbors.
 5. **Hint validity** — hint always returns a currently-free arrow on any reachable state.
+6. **Heart economy** (`tests/logic.test.js`) — bumps drain the persistent pool across levels; regen grants exactly elapsed-hours hearts up to cap (timestamps injected, never `Date.now()` in pure logic); gate fires at 0; ad grant +1 once per gating; gold refill to 5 charges 50; shop packs add gold; save round-trips hearts/heartT; pre-rev-5 saves migrate to 5 hearts.
 
 Gameplay/UI verified manually in the browser via local dev server (port 8092) + on-device.
 
 ## Out of scope for v1
 
-Additional shapes beyond the six (letters, seasonal shapes), daily challenges, streaks (freezers/fixers), shop/NBucks integration, level select, alternate themes, leaderboards, undo.
+Additional shapes beyond the six (letters, seasonal shapes), daily challenges, streaks (freezers/fixers), level select, alternate themes, leaderboards, undo, server-authoritative heart regen (client timestamps accepted).
