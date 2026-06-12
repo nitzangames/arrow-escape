@@ -233,19 +233,35 @@ function peelRayFree(grid, cols, rows, removed, selfId, c, r, dir) {
   return true;
 }
 
+// True if the open ray from `head` in `dir` crosses one of the piece's own
+// cells. Sliding through it is legal (the body vacates along the track), but
+// the arrow READS as if it will smash into its own body — confusing.
+function raySelfCrossing(cols, rows, cells, head, dir) {
+  const dx = DIRS[dir][0], dy = DIRS[dir][1];
+  let x = head % cols + dx, y = ((head / cols) | 0) + dy;
+  while (x >= 0 && x < cols && y >= 0 && y < rows) {
+    if (cells.includes(y * cols + x)) return true;
+    x += dx; y += dy;
+  }
+  return false;
+}
+
 // Phase 2 — peel: repeatedly pick (seeded-randomly) a piece one of whose end
 // continuations is a clear ray, orient its head to that end, remove it.
-// When both ends qualify the choice is random too — always preferring the
-// walk-seed end would skew arrowheads toward up/left (seed ends point away
-// from the body, i.e. back toward where seeding started). Completing the
-// peel proves the board solvable. Returns heads per path, or null if no
-// piece is removable (caller re-tiles).
+// When both ends qualify, prefer the end whose ray doesn't cross the piece's
+// own body (no confusing self-pointing arrows); when both or neither are
+// clean, the choice is a coin flip — always preferring the walk-seed end
+// would skew arrowheads toward up/left. The coin is consumed in every
+// both-valid case so the rng stream stays aligned regardless of cleanliness.
+// Completing the peel proves the board solvable. Returns heads per path, or
+// null if no piece is removable (caller re-tiles).
 function peel(rng, grid, cols, rows, paths) {
   const removed = new Uint8Array(paths.length);
   const heads = new Array(paths.length).fill(null);
   let left = paths.length;
   while (left > 0) {
-    const options = [];
+    const clean = [];   // removable with a head that doesn't cross its own body
+    const dirty = [];   // removable only with a confusing self-pointing head
     for (let p = 0; p < paths.length; p++) {
       if (removed[p]) continue;
       const cells = paths[p];
@@ -255,7 +271,7 @@ function peel(rng, grid, cols, rows, paths) {
         for (let k = 0; k < 4; k++) {
           const d = (d0 + k) % 4;
           if (peelRayFree(grid, cols, rows, removed, p, c, r, d)) {
-            options.push([p, 0, d]);
+            clean.push([p, 0, d]); // singles can't self-cross
             break;
           }
         }
@@ -265,11 +281,20 @@ function peel(rng, grid, cols, rows, paths) {
         const d2 = endDir(cols, h2, cells[cells.length - 2]);
         const ok1 = peelRayFree(grid, cols, rows, removed, p, h1 % cols, (h1 / cols) | 0, d1);
         const ok2 = peelRayFree(grid, cols, rows, removed, p, h2 % cols, (h2 / cols) | 0, d2);
-        if (ok1 && ok2) options.push(rng() < 0.5 ? [p, 0, d1] : [p, 1, d2]);
-        else if (ok1) options.push([p, 0, d1]);
-        else if (ok2) options.push([p, 1, d2]);
+        if (!ok1 && !ok2) continue;
+        const clean1 = ok1 && !raySelfCrossing(cols, rows, cells, h1, d1);
+        const clean2 = ok2 && !raySelfCrossing(cols, rows, cells, h2, d2);
+        if (ok1 && ok2) {
+          const coin = rng() < 0.5; // always consumed: keeps the stream aligned
+          if (clean1 !== clean2) clean.push(clean1 ? [p, 0, d1] : [p, 1, d2]);
+          else (clean1 ? clean : dirty).push(coin ? [p, 0, d1] : [p, 1, d2]);
+        } else if (ok1) (clean1 ? clean : dirty).push([p, 0, d1]);
+        else (clean2 ? clean : dirty).push([p, 1, d2]);
       }
     }
+    // Deferring dirty options usually lets a later round free the piece's
+    // clean end; they stay available as fallback, so feasibility is unchanged.
+    const options = clean.length > 0 ? clean : dirty;
     if (options.length === 0) return null;
     const [p, end, dir] = options[(rng() * options.length) | 0];
     removed[p] = 1;
@@ -303,6 +328,26 @@ export function buildBoard(rng, cols, rows, minLen, maxLen, longBias, mask) {
     const grid = new Int16Array(cols * rows).fill(EMPTY);
     if (mask) for (let i = 0; i < grid.length; i++) if (!mask[i]) grid[i] = WALL;
     pieces.forEach((pc, id) => { for (const ci of pc.cells) grid[ci] = id; });
+    // Repair pass: the peel prefers clean heads, but a round whose only
+    // removable options self-cross still ships confusing arrows. Flip each
+    // survivor to its other end when that end is clean AND the flipped board
+    // still solves (re-verified by simulation). Iterated to a fixpoint: one
+    // successful flip can change the solve order enough to unblock another.
+    let flippedAny = true;
+    while (flippedAny) {
+      flippedAny = false;
+      for (let p = 0; p < pieces.length; p++) {
+        const pc = pieces[p];
+        if (pc.cells.length < 2) continue;
+        if (!raySelfCrossing(cols, rows, pc.cells, pc.cells[0], pc.dir)) continue;
+        const fc = pc.cells.slice().reverse();
+        const flipped = { cells: fc, dir: endDir(cols, fc[0], fc[1]) };
+        if (raySelfCrossing(cols, rows, fc, fc[0], flipped.dir)) continue; // other end no better
+        pieces[p] = flipped;
+        if (simulateWaves(pieces, grid, cols, rows).cleared) flippedAny = true;
+        else pieces[p] = pc; // flip broke the solve
+      }
+    }
     return { pieces, grid };
   }
   return null;

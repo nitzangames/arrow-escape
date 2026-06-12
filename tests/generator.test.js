@@ -310,3 +310,24 @@ test('the diamond cap flows through generateLevel at tier-3 peaks', () => {
   assert.ok(g.cols <= 10 && g.rows <= 14, `capped dims, got ${g.cols}x${g.rows}`);
   assert.ok(simulateWaves(g.pieces, g.grid, g.cols, g.rows).cleared);
 });
+
+test('self-pointing arrowheads are rare (clean-head peel + flip repair)', () => {
+  let selfCross = 0, total = 0;
+  for (let lvl = 1; lvl <= 40; lvl++) {
+    const g = generateLevel(lvl, balance);
+    for (const piece of g.pieces) {
+      total++;
+      const head = piece.cells[0];
+      let x = head % g.cols + DIRS[piece.dir][0];
+      let y = ((head / g.cols) | 0) + DIRS[piece.dir][1];
+      while (x >= 0 && x < g.cols && y >= 0 && y < g.rows) {
+        if (piece.cells.includes(y * g.cols + x)) { selfCross++; break; }
+        x += DIRS[piece.dir][0];
+        y += DIRS[piece.dir][1];
+      }
+    }
+  }
+  // was 6.7% before the clean-head peel preference and the flip-repair pass;
+  // the residue is flips that would break solvability plus true spirals
+  assert.ok(selfCross / total < 0.04, `self-crossing heads ${selfCross}/${total}`);
+});
