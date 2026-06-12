@@ -1,7 +1,7 @@
 // All drawing + screen layout + hit-testing. Reads gd, never mutates it.
 // Paper Minimal theme, validated in mockups/theme-explorer.html (theme A).
 
-import { DIRS } from './generator.js';
+import { DIRS, WALL } from './generator.js';
 import { VERSION } from './balance.js';
 
 const W = 1080;
@@ -10,7 +10,6 @@ const H = 1920;
 const THEME = {
   bg: '#f4f1ea',
   boardBg: '#ece8df',
-  gridLine: '#dcd7cb',
   tile: '#2b2b2e',
   glyph: '#f4f1ea',
   ink: '#2b2b2e',
@@ -264,24 +263,18 @@ function renderGame(c, gd, balance) {
     drawHeart(c, W / 2 + (i - 1) * 100, 270, 64, color);
   }
 
-  // Board panel + grid
+  // Board cells: one tile per playable cell — the board silhouette IS the
+  // shape (walls draw nothing). EMPTY cells keep their tile: vacated floor.
   const g = ensureGeom(gd);
   c.fillStyle = THEME.boardBg;
-  roundRect(c, g.bx - 20, g.by - 20, gd.cols * g.cell + 40, gd.rows * g.cell + 40, 30);
-  c.fill();
-  c.strokeStyle = THEME.gridLine;
-  c.lineWidth = 2;
-  for (let r = 0; r <= gd.rows; r++) {
-    c.beginPath();
-    c.moveTo(g.bx, g.by + r * g.cell);
-    c.lineTo(g.bx + gd.cols * g.cell, g.by + r * g.cell);
-    c.stroke();
-  }
-  for (let col = 0; col <= gd.cols; col++) {
-    c.beginPath();
-    c.moveTo(g.bx + col * g.cell, g.by);
-    c.lineTo(g.bx + col * g.cell, g.by + gd.rows * g.cell);
-    c.stroke();
+  const inset = Math.max(2, g.cell * 0.04);
+  for (let r = 0; r < gd.rows; r++) {
+    for (let col = 0; col < gd.cols; col++) {
+      if (gd.grid[r * gd.cols + col] === WALL) continue;
+      roundRect(c, g.bx + col * g.cell + inset, g.by + r * g.cell + inset,
+        g.cell - 2 * inset, g.cell - 2 * inset, g.cell * 0.12);
+      c.fill();
+    }
   }
 
   // Hint highlight: accent outline under the whole hinted piece
@@ -384,7 +377,10 @@ export function hitTest(gd, x, y) {
     const g = ensureGeom(gd);
     const c = Math.floor((x - g.bx) / g.cell);
     const r = Math.floor((y - g.by) / g.cell);
-    if (c >= 0 && c < gd.cols && r >= 0 && r < gd.rows) return { type: 'cell', c, r };
+    if (c >= 0 && c < gd.cols && r >= 0 && r < gd.rows
+      && gd.grid[r * gd.cols + c] !== WALL) {
+      return { type: 'cell', c, r };
+    }
   }
   return null;
 }
