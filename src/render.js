@@ -10,6 +10,7 @@ const H = 1920;
 const THEME = {
   bg: '#f4f1ea',
   boardBg: '#ece8df',
+  gridLine: '#dcd7cb',
   tile: '#2b2b2e',
   glyph: '#f4f1ea',
   ink: '#2b2b2e',
@@ -263,17 +264,32 @@ function renderGame(c, gd, balance) {
     drawHeart(c, W / 2 + (i - 1) * 100, 270, 64, color);
   }
 
-  // Board cells: one tile per playable cell — the board silhouette IS the
-  // shape (walls draw nothing). EMPTY cells keep their tile: vacated floor.
+  // Board panel hugs the shape: stroking every open cell's rect with a thick
+  // round-joined line in the panel color, then filling the cells, produces
+  // the union silhouette with a padded, round-cornered boundary (interior
+  // strokes vanish into same-color fills). Walls draw nothing; EMPTY cells
+  // keep their floor (vacated cells stay part of the board).
   const g = ensureGeom(gd);
   c.fillStyle = THEME.boardBg;
-  const inset = Math.max(2, g.cell * 0.04);
+  c.strokeStyle = THEME.boardBg;
+  c.lineJoin = 'round';
+  c.lineWidth = 40; // extends the panel 20px beyond the cells, like the old rect panel
   for (let r = 0; r < gd.rows; r++) {
     for (let col = 0; col < gd.cols; col++) {
       if (gd.grid[r * gd.cols + col] === WALL) continue;
-      roundRect(c, g.bx + col * g.cell + inset, g.by + r * g.cell + inset,
-        g.cell - 2 * inset, g.cell - 2 * inset, g.cell * 0.12);
-      c.fill();
+      const x = g.bx + col * g.cell, y = g.by + r * g.cell;
+      c.strokeRect(x, y, g.cell, g.cell);
+      c.fillRect(x, y, g.cell, g.cell);
+    }
+  }
+  // Cell grid inside the shape only
+  c.strokeStyle = THEME.gridLine;
+  c.lineWidth = 2;
+  c.lineJoin = 'miter';
+  for (let r = 0; r < gd.rows; r++) {
+    for (let col = 0; col < gd.cols; col++) {
+      if (gd.grid[r * gd.cols + col] === WALL) continue;
+      c.strokeRect(g.bx + col * g.cell, g.by + r * g.cell, g.cell, g.cell);
     }
   }
 
