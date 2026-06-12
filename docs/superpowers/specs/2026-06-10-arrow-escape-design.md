@@ -60,7 +60,7 @@ Difficulty follows the reference games: hardness comes from **long winding snake
 - `waveDepth` — repeatedly remove all currently-free pieces in waves until empty; the number of waves (higher = harder; measures sequential dependency).
 - `pieceCount` — raw volume.
 
-Selection percentile rises smoothly within each bracket and drops to the floor on every 5th level (sawtooth).
+Selection percentile follows the wave position (§Difficulty waves): gentle at each wave's start, hardest-of-pool at its peak.
 
 ## 2. Progression & economy
 
@@ -167,7 +167,7 @@ ArrowEscape/
 `tests/generator.test.js` (run with `node --test`):
 
 1. **Solvability** — for many levels across the ramp, simulate wave-removal until empty; assert every generated board fully clears.
-2. **Full coverage** — every open cell of every generated board belongs to exactly one snake; all lengths within the bracket's range; wall cells never hold pieces.
+2. **Full coverage** — every open cell of every generated board belongs to exactly one snake; all lengths within the level's wave range; wall cells never hold pieces.
 3. **Determinism** — same level number twice → identical board layout (including shaped levels).
 3b. **Shape correctness** — shaped levels carry the scheduled shape's mask; the mask sampler produces the expected silhouettes at ramp sizes (golden-grid assertions for at least heart at 10×14 and 5×7); shaped boards are solvable; `tapCell` on a wall cell is inert.
 4. **Wave sanity** — within a wave, score rises from start to peak (statistically over many waves); a wave's first level scores below the previous wave's peak; tier peaks rise across tiers (tier-3 peaks > tier-1 peaks on average); tutorial levels 1–3 are easier than everything in tier 1.

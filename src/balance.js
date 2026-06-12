@@ -17,6 +17,9 @@ export const balance = {
   wavePercentileMin: 0.3,
   minLen: 2,              // target floor past the tutorial — singles are packing fallback only
   // [maxLevel, floorCols, floorRows, floorMaxLen, peakCols, peakRows, peakMaxLen, longBias]
+  // Tier maxLevels must satisfy (maxLevel - waveStart + 1) % wavePeriod === 0
+  // so tier transitions land exactly on wave peaks (the peak ships, then the
+  // next wave starts the new tier at its floor).
   tiers: [
     [27, 7, 10, 6, 10, 14, 12, 0.5],
     [59, 8, 11, 7, 11, 15, 14, 0.5],

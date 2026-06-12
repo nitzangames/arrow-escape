@@ -80,6 +80,11 @@ test('waveFor: tutorial, wave interpolation, tier ceilings', () => {
   assert.deepEqual([next.cols, next.rows, next.maxLen], [7, 10, 6]);
   const t3 = waveFor(67, balance); // tier-3 peak: (67-4)%8 = 7 -> t = 1
   assert.deepEqual([t3.cols, t3.rows, t3.maxLen, t3.longBias], [12, 16, 16, 0.6]);
+  // tier boundaries land exactly on wave peaks (peak ships, next wave steps up a tier)
+  assert.equal(waveFor(27, balance).t, 1);
+  assert.deepEqual([waveFor(28, balance).cols, waveFor(28, balance).rows, waveFor(28, balance).maxLen], [8, 11, 7]);
+  assert.equal(waveFor(59, balance).t, 1);
+  assert.deepEqual([waveFor(60, balance).cols, waveFor(60, balance).rows, waveFor(60, balance).maxLen], [8, 12, 8]);
 });
 
 test('rayClear sees other pieces but exempts own body', () => {
@@ -205,10 +210,14 @@ test('difficulty waves: within-wave rise, wave-start dip, tier growth, gentle tu
   for (const w of [4, 12, 20]) { startSum += score(w); peakSum += score(w + 7); }
   assert.ok(peakSum / 3 > startSum / 3, 'tier-1 wave peaks above wave starts');
   assert.ok(score(12) < score(11), 'a new wave dips below the previous peak');
+  // rectangle-only peaks (shaped levels play on smaller/capped boards and
+  // would mix board geometries into the comparison)
   let t1 = 0, t3 = 0;
-  for (const w of [11, 19, 27]) t1 += score(w);
-  for (const w of [67, 75, 83]) t3 += score(w);
-  assert.ok(t3 / 3 > t1 / 3, 'tier-3 peaks harder than tier-1 peaks');
+  for (const w of [11, 27]) t1 += score(w);
+  for (const w of [75, 83]) t3 += score(w);
+  assert.ok(t3 / 2 > t1 / 2, 'tier-3 rectangle peaks harder than tier-1');
+  const p75 = generateLevel(75, balance);
+  assert.deepEqual([p75.cols, p75.rows], [12, 16], 'tier-3 peak rectangle is full size');
   const tut = Math.max(score(1), score(2), score(3));
   assert.ok(tut < startSum / 3, 'tutorial below tier-1 wave starts');
 });
@@ -293,4 +302,11 @@ test('arrowhead directions are roughly balanced on rectangle boards', () => {
   for (const d of dirs) {
     assert.ok(d / total > 0.15, `direction share skewed: ${JSON.stringify(dirs)}`);
   }
+});
+
+test('the diamond cap flows through generateLevel at tier-3 peaks', () => {
+  const g = generateLevel(67, balance); // tier-3 peak, but a diamond level
+  assert.equal(g.shape, 'diamond');
+  assert.ok(g.cols <= 10 && g.rows <= 14, `capped dims, got ${g.cols}x${g.rows}`);
+  assert.ok(simulateWaves(g.pieces, g.grid, g.cols, g.rows).cleared);
 });
