@@ -1,6 +1,9 @@
 import { balance } from './balance.js';
 import { allocGameData } from './gameData.js';
-import { startLevel, nextLevel, tapCell, tick, useHint, refillHearts } from './logic.js';
+import {
+  startLevel, nextLevel, tapCell, tick, useHint, refillHearts,
+  heartTick, grantAdHeart, buyGoldPack, openShop, closeShop,
+} from './logic.js';
 import { render, hitTest } from './render.js';
 import { findHint } from './generator.js';
 import { initAudio, sfx, suspendAudio, resumeAudio } from './audio.js';
@@ -24,6 +27,34 @@ function sdkLoad(key) {
   return Promise.resolve(localStorage.getItem(SAVE_PREFIX + key));
 }
 
+// Rewarded ad. Dev fallback (no PlaySDK): auto-grant so flows are testable.
+// On platform web, showRewardedAd grants without showing an ad (per docs).
+async function sdkRewardedAd() {
+  if (window.PlaySDK && typeof PlaySDK.showRewardedAd === 'function') {
+    try {
+      const r = await PlaySDK.showRewardedAd();
+      return !!(r && r.rewarded);
+    } catch (err) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// NBucks spend. The method is exactly PlaySDK.nbucks.spend and the promise
+// REJECTS on cancel/insufficient funds — rejection means nothing was charged.
+async function sdkSpendNbucks(amount, itemDescription, itemId) {
+  if (window.PlaySDK && PlaySDK.nbucks && typeof PlaySDK.nbucks.spend === 'function') {
+    try {
+      await PlaySDK.nbucks.spend({ amount, itemDescription, itemId });
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+  return true; // dev fallback: free
+}
+
 const gd = allocGameData(balance);
 
 function saveProgress(levelOverride) {
@@ -31,6 +62,8 @@ function saveProgress(levelOverride) {
     level: levelOverride ?? gd.level,
     gold: gd.gold,
     sound: gd.sound,
+    hearts: gd.hearts,
+    heartT: gd.heartT,
   }));
 }
 
@@ -63,20 +96,54 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 });
 
-function onButton(id) {
+let busy = false;
+
+async function onButton(id) {
+  if (busy) return;
   switch (id) {
-    case 'play': startLevel(gd, balance); break;
+    case 'play':
+    case 'retry':
+      if (gd.hearts > 0) startLevel(gd, balance);
+      break;
     case 'sound': gd.sound = !gd.sound; saveProgress(); break;
     case 'hint': if (useHint(gd, balance)) saveProgress(); break;
-    case 'restart': if (gd.remaining > 0) startLevel(gd, balance); break;
-    case 'next': nextLevel(gd, balance); saveProgress(); break;
-    case 'retry': startLevel(gd, balance); break;
+    case 'restart': if (gd.remaining > 0 && gd.hearts > 0) startLevel(gd, balance); break;
+    case 'next': if (gd.hearts > 0) { nextLevel(gd, balance); saveProgress(); } break;
     case 'refill': if (refillHearts(gd, balance)) saveProgress(); break;
+    case 'menu': gd.screen = 'menu'; gd.dirty = true; break;
+    case 'shop': openShop(gd); break;
+    case 'back': closeShop(gd); break;
+    case 'ad': {
+      busy = true;
+      const rewarded = await sdkRewardedAd();
+      busy = false;
+      if (rewarded && grantAdHeart(gd, balance)) saveProgress();
+      break;
+    }
+    case 'pack0':
+    case 'pack1':
+    case 'pack2': {
+      const i = Number(id.slice(4));
+      const pack = balance.goldPacks[i];
+      busy = true;
+      const ok = await sdkSpendNbucks(pack.nbucks, pack.gold + ' gold', pack.id);
+      busy = false;
+      if (ok) {
+        buyGoldPack(gd, balance, i);
+        gd.shopMsg = '+' + pack.gold + ' gold!';
+        saveProgress();
+      } else {
+        gd.shopMsg = 'purchase cancelled';
+      }
+      gd.dirty = true;
+      break;
+    }
   }
 }
 
 // --- loop ---
 let lastT = performance.now();
+let lastHeartSec = 0;
 let prevScreen = 'menu';
 let rafId = 0;
 
@@ -85,6 +152,14 @@ function frame(t) {
   const dt = Math.min((t - lastT) / 1000, 1 / 30);
   lastT = t;
   tick(gd, balance, dt);
+  gd.nowMs = Date.now();
+  const sec = (gd.nowMs / 1000) | 0;
+  if (sec !== lastHeartSec) {
+    lastHeartSec = sec;
+    heartTick(gd, balance, gd.nowMs);
+    // countdown text changes every second on these screens
+    if (gd.heartT !== null && gd.screen !== 'game' && gd.screen !== 'clear') gd.dirty = true;
+  }
   if (gd.screen === 'clear' && prevScreen !== 'clear') {
     sfx(gd, 'fanfare');
     saveProgress(gd.level + 1); // clearing banks the NEXT level — no re-farm on reload
@@ -123,18 +198,25 @@ async function boot() {
       if (Number.isFinite(s.level) && s.level >= 1) gd.level = Math.floor(s.level);
       if (Number.isFinite(s.gold) && s.gold >= 0) gd.gold = Math.floor(s.gold);
       gd.sound = s.sound !== false;
+      if (Number.isFinite(s.hearts) && s.hearts >= 0) {
+        gd.hearts = Math.min(Math.floor(s.hearts), balance.heartCap);
+      }
+      gd.heartT = Number.isFinite(s.heartT) ? s.heartT : null;
     } catch (err) {
       // corrupted save → keep defaults
     }
   }
   // FIX 1: mark boot complete so pointerdown handler becomes active
   booted = true;
+  gd.adsAvailable = window.PlaySDK ? !!PlaySDK.adsAvailable : true; // dev: show ad button
+  heartTick(gd, balance, Date.now()); // apply offline regen before first render
 
   refreshRect();
 
   // Screenshot mode: skip menus, show a busy mid-game board, play a few moves.
   if (window.PlaySDK && PlaySDK.screenshotMode) {
     gd.level = 40;
+    gd.hearts = balance.heartCap;
     startLevel(gd, balance);
     let taps = 0;
     const auto = setInterval(() => {

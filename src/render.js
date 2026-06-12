@@ -39,7 +39,10 @@ const FONT = {
 const BUTTONS = {
   menu: [
     { id: 'play', x: 290, y: 1180, w: 500, h: 140, label: 'PLAY' },
-    { id: 'sound', x: 290, y: 1370, w: 500, h: 100, label: 'SOUND' },
+    { id: 'ad', x: 80, y: 1370, w: 440, h: 100, label: 'AD' },
+    { id: 'refill', x: 560, y: 1370, w: 440, h: 100, label: 'REFILL' },
+    { id: 'shop', x: 290, y: 1510, w: 500, h: 100, label: 'SHOP' },
+    { id: 'sound', x: 290, y: 1650, w: 500, h: 100, label: 'SOUND' },
   ],
   game: [
     { id: 'hint', x: 80, y: 1720, w: 440, h: 120, label: 'HINT' },
@@ -49,10 +52,35 @@ const BUTTONS = {
     { id: 'next', x: 290, y: 1180, w: 500, h: 140, label: 'NEXT' },
   ],
   fail: [
-    { id: 'retry', x: 80, y: 1180, w: 440, h: 140, label: 'RETRY' },
-    { id: 'refill', x: 560, y: 1180, w: 440, h: 140, label: 'CONTINUE' },
+    { id: 'ad', x: 80, y: 1180, w: 440, h: 140, label: 'AD' },
+    { id: 'refill', x: 560, y: 1180, w: 440, h: 140, label: 'REFILL' },
+    { id: 'shop', x: 290, y: 1380, w: 500, h: 100, label: 'GET GOLD' },
+    { id: 'menu', x: 290, y: 1520, w: 500, h: 100, label: 'MENU' },
+  ],
+  shop: [
+    { id: 'pack0', x: 90, y: 760, w: 900, h: 170, label: '' },
+    { id: 'pack1', x: 90, y: 970, w: 900, h: 170, label: '' },
+    { id: 'pack2', x: 90, y: 1180, w: 900, h: 170, label: '' },
+    { id: 'back', x: 290, y: 1450, w: 500, h: 120, label: 'BACK' },
   ],
 };
+
+// Buttons that exist right now, given game state. Shared by rendering and
+// hit-testing so a hidden button can never be tapped.
+function visibleButtons(gd) {
+  const btns = BUTTONS[gd.screen];
+  if (!btns) return null;
+  return btns.filter((b) => {
+    if (b.id === 'ad') {
+      return gd.hearts === 0 && !gd.adUsedThisGate && gd.adsAvailable;
+    }
+    if (b.id === 'refill') {
+      if (gd.screen === 'menu') return gd.hearts === 0;
+      return true; // gate: always offered (disabled state shows if gold short)
+    }
+    return true;
+  });
+}
 
 // Board geometry — cached per (cols, rows) so render allocates nothing per frame.
 const BOARD_AREA = { x: 60, w: 960, y: 460, h: 1160, maxCell: 150 };
@@ -186,6 +214,28 @@ function drawHeart(c, x, y, s, color) {
   c.fill();
 }
 
+// Row of heartCap hearts centered on (cx, y); filled up to gd.hearts.
+// The just-lost heart flashes while the shake plays (game screen only).
+function drawHeartRow(c, gd, balance, cx, y, size, gap, flashing) {
+  const n = balance.heartCap;
+  for (let i = 0; i < n; i++) {
+    let color = i < gd.hearts ? THEME.accent : THEME.heartEmpty;
+    if (flashing && i === gd.hearts && gd.shakeT > 0) {
+      color = Math.sin(gd.shakeT * 40) > 0 ? THEME.accent : THEME.heartEmpty;
+    }
+    drawHeart(c, cx + (i - (n - 1) / 2) * gap, y, size, color);
+  }
+}
+
+// "Next ♥ in 42:13" — gd.nowMs is stamped by main each frame.
+function heartCountdownText(gd) {
+  if (gd.heartT === null) return '';
+  const ms = Math.max(0, gd.heartT - gd.nowMs);
+  const m = Math.floor(ms / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  return 'next ♥ in ' + m + ':' + String(s).padStart(2, '0');
+}
+
 function drawButton(c, b, soft, disabled, labelOverride, font) {
   c.globalAlpha = disabled ? 0.4 : 1;
   c.fillStyle = soft ? THEME.buttonSoftBg : THEME.buttonBg;
@@ -231,14 +281,30 @@ function renderMenu(c, gd, balance) {
 
   c.fillStyle = THEME.ink;
   c.font = FONT.heading;
-  c.fillText('LEVEL ' + gd.level, W / 2, 1040);
+  c.fillText('LEVEL ' + gd.level, W / 2, 980);
 
-  drawButton(c, BUTTONS.menu[0], false, false);
-  drawButton(c, BUTTONS.menu[1], true, false, 'SOUND: ' + (gd.sound ? 'ON' : 'OFF'), FONT.bodyLarge);
+  drawHeartRow(c, gd, balance, W / 2, 1040, 48, 76, false);
+  if (gd.hearts < balance.heartCap) {
+    c.fillStyle = THEME.inkSoft;
+    c.font = FONT.body;
+    c.fillText(heartCountdownText(gd), W / 2, 1140);
+  }
+
+  for (const b of visibleButtons(gd)) {
+    if (b.id === 'play') drawButton(c, b, false, gd.hearts === 0);
+    else if (b.id === 'ad') drawButton(c, b, true, false, 'AD · +1 ♥', FONT.bodyLarge);
+    else if (b.id === 'refill') {
+      drawButton(c, b, true, gd.gold < balance.refillCost,
+        'REFILL · ' + balance.refillCost, FONT.bodyLarge);
+    } else if (b.id === 'shop') drawButton(c, b, false, false, 'SHOP', FONT.bodyLarge);
+    else if (b.id === 'sound') {
+      drawButton(c, b, true, false, 'SOUND: ' + (gd.sound ? 'ON' : 'OFF'), FONT.bodyLarge);
+    }
+  }
 
   c.fillStyle = THEME.inkSoft;
   c.font = FONT.body;
-  c.fillText('● ' + gd.gold + ' gold', W / 2, 1560);
+  c.fillText('● ' + gd.gold + ' gold', W / 2, 1810);
   drawVersion(c, true);
 }
 
@@ -255,14 +321,7 @@ function renderGame(c, gd, balance) {
   c.fillText('LEVEL ' + gd.level, 80, 180);
   c.textAlign = 'right';
   c.fillText('● ' + gd.gold, W - 80, 180);
-  for (let i = 0; i < balance.hearts; i++) {
-    let color = i < gd.hearts ? THEME.accent : THEME.heartEmpty;
-    // The just-lost heart flashes while the shake plays.
-    if (i === gd.hearts && gd.shakeT > 0) {
-      color = Math.sin(gd.shakeT * 40) > 0 ? THEME.accent : THEME.heartEmpty;
-    }
-    drawHeart(c, W / 2 + (i - 1) * 100, 270, 64, color);
-  }
+  drawHeartRow(c, gd, balance, W / 2, 270, 48, 76, true);
 
   // Board panel hugs the shape: stroking every open cell's rect with a thick
   // round-joined line in the panel color, then filling the cells, produces
@@ -356,13 +415,58 @@ function renderFail(c, gd, balance) {
   c.fillStyle = THEME.ink;
   c.textAlign = 'center';
   c.font = FONT.title;
-  c.fillText('OUT OF HEARTS', W / 2, 800);
+  c.fillText('OUT OF HEARTS', W / 2, 760);
+  drawHeartRow(c, gd, balance, W / 2, 830, 48, 76, false);
   c.fillStyle = THEME.inkSoft;
   c.font = FONT.bodyLarge;
-  c.fillText('● ' + gd.gold + ' gold', W / 2, 940);
-  drawButton(c, BUTTONS.fail[0], true, false, 'RETRY', FONT.bodyLarge);
-  drawButton(c, BUTTONS.fail[1], false, gd.gold < balance.refillCost,
-    'CONTINUE · ' + balance.refillCost, FONT.bodyLarge);
+  c.fillText(heartCountdownText(gd), W / 2, 990);
+  c.font = FONT.body;
+  c.fillText('● ' + gd.gold + ' gold', W / 2, 1060);
+  for (const b of visibleButtons(gd)) {
+    if (b.id === 'ad') drawButton(c, b, false, false, 'AD · +1 ♥', FONT.bodyLarge);
+    else if (b.id === 'refill') {
+      drawButton(c, b, false, gd.gold < balance.refillCost,
+        'REFILL · ' + balance.refillCost, FONT.bodyLarge);
+    } else if (b.id === 'shop') drawButton(c, b, true, false, 'GET GOLD', FONT.bodyLarge);
+    else if (b.id === 'menu') drawButton(c, b, true, false, 'MENU', FONT.bodyLarge);
+  }
+  drawVersion(c, true);
+}
+
+function renderShop(c, gd, balance) {
+  c.fillStyle = THEME.bg;
+  c.fillRect(0, 0, W, H);
+  c.fillStyle = THEME.ink;
+  c.textAlign = 'center';
+  c.font = FONT.title;
+  c.fillText('GOLD SHOP', W / 2, 380);
+  c.fillStyle = THEME.inkSoft;
+  c.font = FONT.bodyLarge;
+  c.fillText('● ' + gd.gold + ' gold', W / 2, 500);
+  c.font = FONT.body;
+  c.fillText('100 NBucks = $1', W / 2, 580);
+
+  const packs = balance.goldPacks;
+  for (let i = 0; i < packs.length; i++) {
+    const b = BUTTONS.shop[i];
+    c.fillStyle = THEME.buttonSoftBg;
+    roundRect(c, b.x, b.y, b.w, b.h, 32);
+    c.fill();
+    c.fillStyle = THEME.ink;
+    c.textAlign = 'left';
+    c.font = FONT.subheading;
+    c.fillText('● ' + packs[i].gold + ' gold', b.x + 60, b.y + b.h / 2 + 22);
+    c.fillStyle = THEME.accent;
+    c.textAlign = 'right';
+    c.fillText(packs[i].nbucks + ' NB', b.x + b.w - 60, b.y + b.h / 2 + 22);
+  }
+  c.textAlign = 'center';
+  if (gd.shopMsg) {
+    c.fillStyle = THEME.inkSoft;
+    c.font = FONT.body;
+    c.fillText(gd.shopMsg, W / 2, 1420);
+  }
+  drawButton(c, BUTTONS.shop[3], false, false, 'BACK', FONT.bodyLarge);
   drawVersion(c, true);
 }
 
@@ -373,6 +477,10 @@ export function render(ctx, gd, balance) {
     renderMenu(ctx, gd, balance);
     return;
   }
+  if (gd.screen === 'shop') {
+    renderShop(ctx, gd, balance);
+    return;
+  }
   renderGame(ctx, gd, balance);
   if (gd.screen === 'clear') renderClear(ctx, gd);
   else if (gd.screen === 'fail') renderFail(ctx, gd, balance);
@@ -381,7 +489,7 @@ export function render(ctx, gd, balance) {
 // Hit-testing shares BUTTONS and geometry with the renderer.
 // Returns {type:'button', id} | {type:'cell', c, r} | null.
 export function hitTest(gd, x, y) {
-  const btns = BUTTONS[gd.screen];
+  const btns = visibleButtons(gd);
   if (btns) {
     for (const b of btns) {
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
