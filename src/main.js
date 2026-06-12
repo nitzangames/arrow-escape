@@ -92,6 +92,7 @@ canvas.addEventListener('pointerdown', (e) => {
     else if (result === 'bump') {
       sfx(gd, 'bump');
       if (window.PlaySDK && PlaySDK.haptic) PlaySDK.haptic('medium');
+      saveProgress(); // heart losses must survive a refresh — the gate depends on it
     }
   }
 });
@@ -102,7 +103,6 @@ async function onButton(id) {
   if (busy) return;
   switch (id) {
     case 'play':
-    case 'retry':
       if (gd.hearts > 0) startLevel(gd, balance);
       break;
     case 'sound': gd.sound = !gd.sound; saveProgress(); break;
@@ -156,7 +156,7 @@ function frame(t) {
   const sec = (gd.nowMs / 1000) | 0;
   if (sec !== lastHeartSec) {
     lastHeartSec = sec;
-    heartTick(gd, balance, gd.nowMs);
+    if (heartTick(gd, balance, gd.nowMs)) saveProgress(); // timer starts + hourly grants survive a refresh
     // countdown text changes every second on these screens
     if (gd.heartT !== null && gd.screen !== 'game' && gd.screen !== 'clear') gd.dirty = true;
   }

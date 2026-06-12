@@ -237,6 +237,7 @@ export function buyGoldPack(gd, balance, packIndex) {
 export function openShop(gd) {
   if (gd.screen !== 'menu' && gd.screen !== 'fail') return;
   gd.shopFrom = gd.screen;
+  gd.shopMsg = '';
   gd.screen = 'shop';
   gd.dirty = true;
 }

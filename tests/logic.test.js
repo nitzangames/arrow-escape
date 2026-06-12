@@ -297,7 +297,9 @@ test('openShop/closeShop round-trip and preserve a gated board', () => {
     { cells: [1], dir: 3 },
   ]);
   gd.screen = 'fail';
+  gd.shopMsg = '+150 gold!';
   openShop(gd);
+  assert.equal(gd.shopMsg, '', 'stale purchase feedback cleared on open');
   assert.equal(gd.screen, 'shop');
   assert.equal(gd.shopFrom, 'fail');
   closeShop(gd);
