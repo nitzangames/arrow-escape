@@ -1,6 +1,6 @@
 # Arrow Escape — Design Spec (GDD)
 
-Date: 2026-06-10 · rev 5 (2026-06-12): monetization — persistent hearts (cap 5, 1/hour regen), rewarded-ad/gold refill gate, gold-for-NBucks shop. rev 4 (2026-06-11): custom board shapes; boards 2× bigger
+Date: 2026-06-10 · rev 6 (2026-06-12): difficulty waves — oscillating curve from level 4, snakes to 16 cells, boards to 12×16, hardest-of-pool selection (reference-game difficulty). rev 5: monetization. rev 4: shapes + bigger boards
 Status: approved design
 Platform: nitzan.games (1080×1920 portrait canvas, sandboxed iframe, PlaySDK)
 Slug: `arrow-escape` · Title: **Arrow Escape**
@@ -25,33 +25,34 @@ Slug: `arrow-escape` · Title: **Arrow Escape**
 - Pieces already sliding off the board no longer block rays (their grid cells are freed the moment the slide starts).
 - Mistakes never deadlock a board: removing pieces only opens rays, so any reachable state of a solvable board is still solvable, and at least one free piece always exists.
 
-### Difficulty ramp
+### Difficulty waves (reference-game difficulty)
 
-Board size and snake length mix scale with level number `N` (all values live in `balance.js`). Piece count is no longer a tuning knob — it emerges from packing the full board with the bracket's length mix:
+Difficulty follows the reference games: hardness comes from **long winding snakes** (10–16 cells, spirals, deep dependency chains) and **heavily blocked boards** (few initially-free pieces), not from piece count. From level 4, difficulty oscillates in **waves**: within each wave the board grows, snakes lengthen, and candidate selection climbs to the hardest of the pool; the next wave drops back down ("easy again, then hard again"). Wave peaks rise with progression. All knobs in `balance.js`:
 
-| Levels   | Grid   | Lengths | Long bias |
-|----------|--------|---------|-----------|
-| 1–3      | 5×7    | 1–4     | 0.0       |
-| 4–6      | 6×9    | 1–5     | 0.2       |
-| 7–10     | 7×10   | 1–5     | 0.3       |
-| 11–14    | 8×12   | 1–6     | 0.4       |
-| 15–19    | 9×13   | 1–6     | 0.5       |
-| 20–60    | 10×14  | 1–7     | 0.6       |
-| 61+      | 10×14  | 1–7     | 0.7       |
+- **Levels 1–3 (tutorial):** 5×7, target lengths 2–5, easiest candidate. Gentle.
+- **From level 4:** wave position `t = ((level − 4) % wavePeriod) / (wavePeriod − 1)` with `wavePeriod: 8`. Board dims and max length interpolate (rounded) from the tier's floor to its peak as `t` goes 0 → 1; the selection percentile climbs `0.3 → 1.0` (the wave's last level ships the hardest of the candidate pool).
+- **Progression tiers** raise the ceilings:
 
-The board reaches full size (10×14, 140 cells) by level 20 and stays there — early 5×7 boards were too easy, so growth is front-loaded. At 10×14 the cell size drops to ~83 canvas px (from 150 on 5×7), still comfortably tappable.
+| Tier | Levels | Floor (dims / maxLen) | Peak (dims / maxLen) | Long bias |
+|------|--------|-----------------------|----------------------|-----------|
+| 1    | 4–27   | 7×10 / 6              | 10×14 / 12           | 0.5       |
+| 2    | 28–59  | 8×11 / 7              | 11×15 / 14           | 0.5       |
+| 3    | 60+    | 8×12 / 8              | 12×16 / 16           | 0.6       |
 
-**Long bias** skews target-length sampling toward the top of the range (0 = uniform, 1 = always maxLen), so late boards read as dense tangles of long winding snakes while early boards stay short and legible. Actual lengths can fall below target when packing constraints cut a walk short; length 1 is always a legal fallback, which is what makes perfect packing reliable.
+- **minLen target is 2** everywhere past the tutorial: singles exist only as packing fallback (the merge pass keeps them rare).
+- **Blocking pressure:** `candidates: 10` and `scoreWeights: { wave: 1.5, blocked: 8.0, count: 0.02 }` — selection optimizes for sequential depth and initially-blocked pieces. Measured at the tier-3 peak: hardest-of-10 boards average ~12 dependency waves and ~19% initially-free pieces (pool mean 8 / 23%).
+- The wave system **replaces** the old bracket ramp and the every-5th-level breather (`isBreather`/`breatherEvery`/`bracketRange`/`percentileMin`/`percentileMax`/`openBracketSpan` are retired); each wave's first levels are the breathers.
+- At 12×16 the cell size is ~72 canvas px — denser than anything shipped before; verified visually during implementation.
 
-A **sawtooth** keeps pacing relaxing: every 5th level is a "breather" board (the easiest of its candidate pool), mirroring the reference game's hard/easy alternation.
+**Long bias** skews target-length sampling toward the top of the range (0 = uniform, 1 = always maxLen). Actual lengths can fall below target when packing constraints cut a walk short; length 1 remains the always-legal fallback that makes perfect packing reliable. Feasibility measured: rectangles and all shapes pack with 0% candidate failure at the tier-3 peak — except the diamond, whose stair-corner geometry breaks down beyond 10×14 (~97% failure at 12×16), so **shapes carry an optional per-shape dimension cap** applied as `min(wave dims, shape cap)`; only the diamond uses it (10×14).
 
 ### Level generation (in `generator.js`)
 
 - **Seeded RNG:** mulberry32. Seed derived deterministically from level number → same level N is the same board for every player, forever. Failing and retrying a level replays the identical board.
 - **Reverse construction guarantees solvability:** place snakes one at a time into an initially empty board; a piece may only be placed where its head's exit ray is clear of all *already-placed* pieces (and walls) at placement time. Rays over still-empty cells are fine: those cells get later-placed pieces, which are removed *earlier* in forward play. The reverse of placement order is then a valid solution.
 - **Full-fill packing (tile, then peel):** generation has two phases. *Tiling* partitions the open cells into snake paths with no ray constraints — seeded at statically-dead cells first (cells with no wall-free corridor to any edge, which can never be heads), then scan order; each path shrinks until at least one end continues into a wall-free corridor. *Peeling* assigns arrowheads: repeatedly pick (seeded-randomly) a piece one of whose end-continuation rays is clear of the remaining pieces, orient its head to that end, and remove it. The peel order is a forward solution, so every shipped board is solvable by construction. A stalled peel re-tiles (bounded retries, same rng stream — deterministic); a candidate that exhausts its attempts is skipped. The previous greedy ray-aware walk could not pack shapes with single-escape pockets (a heart's lower flanks wedged >99% of attempts).
-- **Shape scheduling (in `shapes.js`):** `shapeFor(level)` returns a shape key or null — a level is shaped iff `level ≥ 10 && (level − 10) % 3 === 0`; shaped levels use `SHAPE_ORDER[((level − 10) / 3) % 6]` with `SHAPE_ORDER = [heart, diamond, plus, donut, hourglass, triangle]`. `maskFor(shapeKey, cols, rows)` samples the shape's implicit formula at cell centers over its bounding box → `Uint8Array` (1 = open). `generateLevel` passes the mask to every candidate build for that level. A shaped level that coincides with a breather (e.g., level 10) is simply both: shaped and easiest-of-pool.
-- **Candidate scoring smooths the curve:** for level N, generate 8 candidate boards (seeds `hash(N, 0..7)`), score each, and pick by *percentile within the candidate pool*: breather levels take the easiest candidate; normal levels ramp from the 30th to the 90th percentile across their bracket. Distribution-relative selection auto-calibrates to whatever scores each board size can produce (an absolute target curve was tried first and degenerated to easiest-of-8 for mid-game brackets).
+- **Shape scheduling (in `shapes.js`):** `shapeFor(level)` returns a shape key or null — a level is shaped iff `level ≥ 10 && (level − 10) % 3 === 0`; shaped levels use `SHAPE_ORDER[((level − 10) / 3) % 6]` with `SHAPE_ORDER = [heart, diamond, plus, donut, hourglass, triangle]`. `maskFor(shapeKey, cols, rows)` samples the shape's implicit formula at cell centers over its bounding box → `Uint8Array` (1 = open). `generateLevel` passes the mask to every candidate build for that level, requesting the wave's dims clamped by the shape's optional per-shape cap (`min(wave dims, shape cap)`; only the diamond is capped, at 10×14).
+- **Candidate scoring drives the wave:** for level N, generate `balance.candidates` (10) boards from seeds `hash(N, 0..9)`, score each, and pick by *percentile within the candidate pool* at the wave position (0.3 at a wave's start → 1.0 at its peak; tutorial levels take the easiest). Distribution-relative selection auto-calibrates to whatever scores each board size can produce.
 
 **Difficulty score** of a board (weights in `balance.js`):
 
@@ -169,7 +170,7 @@ ArrowEscape/
 2. **Full coverage** — every open cell of every generated board belongs to exactly one snake; all lengths within the bracket's range; wall cells never hold pieces.
 3. **Determinism** — same level number twice → identical board layout (including shaped levels).
 3b. **Shape correctness** — shaped levels carry the scheduled shape's mask; the mask sampler produces the expected silhouettes at ramp sizes (golden-grid assertions for at least heart at 10×14 and 5×7); shaped boards are solvable; `tapCell` on a wall cell is inert.
-4. **Ramp sanity** — average difficulty score over levels 1–300 is monotonically increasing per bracket; every 5th level scores below its neighbors.
+4. **Wave sanity** — within a wave, score rises from start to peak (statistically over many waves); a wave's first level scores below the previous wave's peak; tier peaks rise across tiers (tier-3 peaks > tier-1 peaks on average); tutorial levels 1–3 are easier than everything in tier 1.
 5. **Hint validity** — hint always returns a currently-free arrow on any reachable state.
 6. **Heart economy** (`tests/logic.test.js`) — bumps drain the persistent pool across levels; regen grants exactly elapsed-hours hearts up to cap (timestamps injected, never `Date.now()` in pure logic); gate fires at 0; ad grant +1 once per gating; gold refill to 5 charges 50; shop packs add gold; save round-trips hearts/heartT; pre-rev-5 saves migrate to 5 hearts.
 
