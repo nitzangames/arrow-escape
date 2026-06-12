@@ -9,87 +9,64 @@
 <canvas id="cv" width="512" height="512"></canvas>
 <a id="dl" download="thumbnail.png" style="color:#9cf; font-size:18px;">Download thumbnail.png</a>
 <script>
+// "The Tangle": full-bleed late-game density — snakes edge to edge, one red,
+// title on a translucent band. Same visual language as src/render.js.
 const cv = document.getElementById('cv');
 const c = cv.getContext('2d');
 
-function roundRect(x, y, w, h, r) {
-  c.beginPath();
-  c.moveTo(x + r, y);
-  c.arcTo(x + w, y, x + w, y + h, r);
-  c.arcTo(x + w, y + h, x, y + h, r);
-  c.arcTo(x, y + h, x, y, r);
-  c.arcTo(x, y, x + w, y, r);
-  c.closePath();
-}
+const BOARD = '#ece8df', GRID = '#dcd7cb', INK = '#2b2b2e', GLYPH = '#f4f1ea', RED = '#e2574c';
+const CS = 86, OX = -2, OY = -2; // 6x6 grid bleeding past the canvas edges
 
-// background
-c.fillStyle = '#f4f1ea';
-c.fillRect(0, 0, 512, 512);
-
-// mini board: 4x3 virtual grid of snake pieces (same visual language as render.js)
-const CELL = 88, X0 = 80, Y0 = 56, COLS = 4, ROWS = 3;
-const cx = (q) => X0 + (q + 0.5) * CELL;
-const cy = (r) => Y0 + (r + 0.5) * CELL;
-
-// subtle cell grid on a board panel
-c.fillStyle = '#ece8df';
-roundRect(X0 - 14, Y0 - 14, COLS * CELL + 28, ROWS * CELL + 28, 20);
-c.fill();
-c.strokeStyle = '#dcd7cb';
-c.lineWidth = 2;
-for (let r = 0; r <= ROWS; r++) {
-  c.beginPath();
-  c.moveTo(X0, Y0 + r * CELL);
-  c.lineTo(X0 + COLS * CELL, Y0 + r * CELL);
-  c.stroke();
-}
-for (let q = 0; q <= COLS; q++) {
-  c.beginPath();
-  c.moveTo(X0 + q * CELL, Y0);
-  c.lineTo(X0 + q * CELL, Y0 + ROWS * CELL);
-  c.stroke();
-}
-
-// snake: cells [[col,row], ...] head first, stroked tail -> head
 function snake(cells, dir, color) {
   c.lineCap = 'round';
   c.lineJoin = 'round';
-  c.lineWidth = CELL * 0.72;
+  c.lineWidth = CS * 0.72;
   c.strokeStyle = color;
   c.beginPath();
   for (let j = cells.length - 1; j >= 0; j--) {
-    const x = cx(cells[j][0]), y = cy(cells[j][1]);
+    const x = OX + (cells[j][0] + 0.5) * CS, y = OY + (cells[j][1] + 0.5) * CS;
     if (j === cells.length - 1) c.moveTo(x, y);
     else c.lineTo(x, y);
   }
-  if (cells.length === 1) c.lineTo(cx(cells[0][0]) + 0.01, cy(cells[0][1]));
   c.stroke();
-  // arrowhead glyph on the head
-  const u = CELL / 150;
+  const u = CS / 150;
   c.save();
-  c.translate(cx(cells[0][0]), cy(cells[0][1]));
+  c.translate(OX + (cells[0][0] + 0.5) * CS, OY + (cells[0][1] + 0.5) * CS);
   c.rotate(dir * Math.PI / 2);
-  c.fillStyle = '#f4f1ea';
+  c.fillStyle = GLYPH;
   c.beginPath();
-  c.moveTo(0, -32 * u);
-  c.lineTo(24 * u, 14 * u);
-  c.lineTo(0, 4 * u);
-  c.lineTo(-24 * u, 14 * u);
+  c.moveTo(0, -32 * u); c.lineTo(24 * u, 14 * u); c.lineTo(0, 4 * u); c.lineTo(-24 * u, 14 * u);
   c.closePath();
   c.fill();
   c.restore();
 }
 
-snake([[3, 0], [3, 1], [2, 1]], 0, '#2b2b2e');            // L-shaped 3-cell, up
-snake([[1, 0], [0, 0]], 1, '#e2574c');                    // straight 2-cell, right, accent
-snake([[0, 1], [1, 1], [1, 2], [2, 2]], 3, '#2b2b2e');    // S-shaped 4-cell, left
+// board surface + grid texture
+c.fillStyle = BOARD;
+c.fillRect(0, 0, 512, 512);
+c.strokeStyle = GRID;
+c.lineWidth = 1.5;
+for (let y = 0; y < 6; y++) {
+  for (let x = 0; x < 6; x++) c.strokeRect(OX + x * CS, OY + y * CS, CS, CS);
+}
 
-// title — must be readable at ~200px wide
-c.fillStyle = '#2b2b2e';
+// hand-tiled 6x6 tangle (verified: 36/36 cells, connected, no overlap)
+snake([[0,0],[1,0],[2,0],[2,1],[1,1],[0,1]], 3, INK);
+snake([[3,1],[4,1],[5,1],[5,0],[4,0],[3,0]], 3, INK);
+snake([[2,2],[1,2],[1,3],[0,3],[0,2]], 1, RED);
+snake([[5,2],[4,2],[3,2],[3,3],[2,3]], 1, INK);
+snake([[4,3],[5,3],[5,4],[5,5],[4,5],[4,4]], 3, INK);
+snake([[3,4],[2,4],[1,4],[0,4]], 1, INK);
+snake([[0,5],[1,5],[2,5],[3,5]], 3, INK);
+
+// title band — must be readable at ~200px wide
+c.fillStyle = 'rgba(244, 241, 234, 0.94)';
+c.fillRect(0, 352, 512, 160);
+c.fillStyle = INK;
 c.textAlign = 'center';
-c.font = '800 64px -apple-system, system-ui, sans-serif';
-c.fillText('ARROW', 256, 440);
-c.fillText('ESCAPE', 256, 500);
+c.font = '800 56px -apple-system, system-ui, sans-serif';
+c.fillText('ARROW', 256, 420);
+c.fillText('ESCAPE', 256, 478);
 
 document.getElementById('dl').href = cv.toDataURL('image/png');
 </script>
