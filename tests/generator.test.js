@@ -6,6 +6,7 @@ import {
   buildBoard, simulateWaves, scoreBoard, isBreather,
   pickIndexForLevel, generateLevel, findHint,
 } from '../src/generator.js';
+import { maskFor } from '../src/shapes.js';
 
 // Hand-built board: defs = [{cells, dir}, ...] — sparse boards are fine for
 // the analysis helpers (only the generator promises full fill).
@@ -66,9 +67,10 @@ test('levelSeed differs across levels and candidates', () => {
 });
 
 test('rampFor returns the right bracket', () => {
-  assert.deepEqual(rampFor(1, balance), { cols: 4, rows: 5, minLen: 1, maxLen: 4, longBias: 0 });
-  assert.deepEqual(rampFor(11, balance), { cols: 5, rows: 7, minLen: 1, maxLen: 5, longBias: 0.2 });
-  assert.deepEqual(rampFor(301, balance), { cols: 8, rows: 11, minLen: 1, maxLen: 7, longBias: 0.7 });
+  assert.deepEqual(rampFor(1, balance), { cols: 5, rows: 7, minLen: 1, maxLen: 4, longBias: 0 });
+  assert.deepEqual(rampFor(4, balance), { cols: 6, rows: 9, minLen: 1, maxLen: 5, longBias: 0.2 });
+  assert.deepEqual(rampFor(20, balance), { cols: 10, rows: 14, minLen: 1, maxLen: 7, longBias: 0.6 });
+  assert.deepEqual(rampFor(61, balance), { cols: 10, rows: 14, minLen: 1, maxLen: 7, longBias: 0.7 });
 });
 
 test('rayClear sees other pieces but exempts own body', () => {
@@ -195,8 +197,10 @@ test('generation never wedges across the whole early game', () => {
   }
 });
 
-test('breather boards are genuinely easier than neighbors in every bracket', () => {
-  const brackets = [[11, 30], [31, 60], [61, 120], [121, 200]];
+test('breather boards are genuinely easier than neighbors in the wide brackets', () => {
+  // Early brackets are 3-5 levels wide (at most one breather each) — too few
+  // for a stable mean, so compare within the two wide 10x14 brackets only.
+  const brackets = [[20, 60], [61, 160]];
   for (const [lo, hi] of brackets) {
     let bSum = 0, bN = 0, nSum = 0, nN = 0;
     for (let lvl = lo; lvl <= hi; lvl++) {
@@ -240,4 +244,31 @@ test('findHint returns -1 on an empty board, never mutates, and respects alive',
   const alive = new Uint8Array(g.pieces.length);
   alive[idx] = 1;
   assert.equal(findHint(g.pieces, g.grid, g.cols, g.rows, alive), idx);
+});
+
+test('level 10 is the heart: mask applied, full, solvable, deterministic', () => {
+  const g = generateLevel(10, balance);
+  assert.equal(g.shape, 'heart');
+  const m = maskFor('heart', 7, 10); // level 10 bracket dims
+  assert.equal(g.cols, m.cols);
+  assert.equal(g.rows, m.rows);
+  for (let i = 0; i < m.mask.length; i++) {
+    if (m.mask[i]) assert.notEqual(g.grid[i], WALL, `cell ${i} should be playable`);
+    else assert.equal(g.grid[i], WALL, `cell ${i} should be a wall`);
+  }
+  assertWellFormed(g, g.cols, g.rows, rampFor(10, balance).maxLen);
+  assert.ok(simulateWaves(g.pieces, g.grid, g.cols, g.rows).cleared);
+  assert.deepEqual(generateLevel(10, balance).pieces, g.pieces);
+});
+
+test('every shaped level through 100 is shaped, full, and solvable', () => {
+  for (let lvl = 10; lvl <= 100; lvl += 3) {
+    const g = generateLevel(lvl, balance);
+    assert.ok(g.shape, `level ${lvl} should be shaped`);
+    let walls = 0;
+    for (const v of g.grid) if (v === WALL) walls++;
+    assert.ok(walls > 0, `level ${lvl} has no walls`);
+    assertWellFormed(g, g.cols, g.rows, rampFor(lvl, balance).maxLen);
+    assert.ok(simulateWaves(g.pieces, g.grid, g.cols, g.rows).cleared, `level ${lvl} not solvable`);
+  }
 });

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { balance } from '../src/balance.js';
 import { allocGameData } from '../src/gameData.js';
-import { EMPTY } from '../src/generator.js';
+import { EMPTY, WALL } from '../src/generator.js';
 import {
   startLevel, tapCell, tick, distToEdge,
   awardClear, nextLevel, useHint, refillHearts,
@@ -204,4 +204,12 @@ test('nextLevel advances and regenerates', () => {
   assert.equal(gd.screen, 'game');
   assert.equal(gd.hearts, balance.hearts);
   assert.ok(gd.remaining > 0);
+});
+
+test('tapping a wall cell is inert', () => {
+  const gd = makeGd(2, 1, [{ cells: [0], dir: 3 }]);
+  gd.grid[1] = WALL;
+  assert.equal(tapCell(gd, balance, 1, 0), 'none');
+  assert.equal(gd.hearts, balance.hearts);
+  assert.equal(gd.remaining, 1);
 });

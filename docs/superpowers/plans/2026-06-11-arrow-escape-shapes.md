@@ -487,3 +487,11 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 | New ramp | rampFor unit tests; never-wedges sweep 1–120 covers all new brackets |
 | Visuals | Playwright screenshots: rectangle, heart, donut, hourglass; read by the controller |
 | No deploy | per standing rule — user verifies locally first |
+
+---
+
+## Revision (2026-06-11, during execution)
+
+Task 1's planned `buildBoard` (greedy ray-aware walks + lowest-index seeding, inherited from the full-fill plan) could not pack pocketed shapes: the heart wedged >99% of attempts at every bias/seed-order tried (its lower-flank cells have a single escape — straight up through the lobes — which early walks invariably suffocate), and level 136 crashed generateLevel. After measuring scan-order, reverse-order, most-constrained-first, and last-escape-polite walk variants (all ≥75% null on hearts), the generator was reworked to **tile-then-peel** (see the spec's "Full-fill packing" bullet): tiling guarantees coverage trivially, peeling guarantees solvability by constructing a forward solution. Validated at 0% null across all six shapes and the rectangle (10×14, maxLen 7, bias 0.7, 300 seeds each, restart cap 400). The heart-only `reverseOrder` parameter added mid-task was removed.
+
+Constants recalibrated post-rework: diamond `1.02` → `1.3` (at 10×14 the pointy diamond has 32 statically-dead cells and never tiles; 1.3's 4-wide tips pack at 0.2% per-candidate failure) and hourglass waist restored `0.35` → `0.12` (2-cell waist, 0.0% failure with tile-then-peel). Spec-review caught both constants having been silently widened by the earlier wedging workaround.

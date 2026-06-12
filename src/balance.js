@@ -1,4 +1,4 @@
-export const VERSION = 'v0.1.18';
+export const VERSION = 'v0.1.19';
 
 export const balance = {
   canvasW: 1080,
@@ -10,13 +10,16 @@ export const balance = {
   // Boards are always 100% filled; piece count emerges from the length mix.
   // minLen is a sampling floor, not a guarantee — boxed-in walks still yield shorter pieces.
   ramp: [
-    [10, 4, 5, 1, 4, 0],
-    [30, 5, 7, 1, 5, 0.2],
-    [60, 6, 8, 1, 5, 0.35],
-    [120, 7, 9, 1, 6, 0.5],
-    [300, 7, 10, 1, 7, 0.6],
-    [Infinity, 8, 11, 1, 7, 0.7],
+    [3, 5, 7, 1, 4, 0],
+    [6, 6, 9, 1, 5, 0.2],
+    [10, 7, 10, 1, 5, 0.3],
+    [14, 8, 12, 1, 6, 0.4],
+    [19, 9, 13, 1, 6, 0.5],
+    [60, 10, 14, 1, 7, 0.6],
+    [Infinity, 10, 14, 1, 7, 0.7],
   ],
+  shapeStartLevel: 10,    // first shaped level
+  shapeEvery: 3,          // a shaped board every 3rd level from shapeStartLevel
   candidates: 8,          // boards generated per level, picked by percentile
   breatherEvery: 5,       // every 5th level is an easier "breather"
   percentileMin: 0.3,     // normal-level difficulty percentile at bracket start

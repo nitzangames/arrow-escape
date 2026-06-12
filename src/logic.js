@@ -43,7 +43,7 @@ export function tapCell(gd, balance, c, r) {
   if (gd.screen !== 'game' || gd.hearts <= 0) return 'none';
   if (c < 0 || c >= gd.cols || r < 0 || r >= gd.rows) return 'none';
   const p = gd.grid[r * gd.cols + c];
-  if (p === EMPTY || gd.bumpT[p] > 0) return 'none';
+  if (p < 0 || gd.bumpT[p] > 0) return 'none'; // p < 0: EMPTY or WALL
   gd.dirty = true;
   const piece = gd.pieces[p];
   const head = piece.cells[0];
