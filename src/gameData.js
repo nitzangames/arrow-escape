@@ -25,7 +25,9 @@ export function allocGameData(balance) {
     adsAvailable: true,     // set by main at boot from PlaySDK.adsAvailable
     nowMs: 0,               // stamped by main each frame; render-only countdowns
     shopFrom: 'menu',       // screen to return to when the shop closes
-    shopMsg: '',            // transient purchase feedback ("+150 gold!" / cancelled)
+    shopMsg: '',            // quiet inline feedback (purchase cancelled)
+    popupText: '',          // celebration card line ("+500"), empty when hidden
+    popupT: 0,              // s remaining on the celebration card
     flawless: true,
 
     hintPiece: -1,

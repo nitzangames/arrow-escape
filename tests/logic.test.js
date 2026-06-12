@@ -5,7 +5,7 @@ import { allocGameData } from '../src/gameData.js';
 import { EMPTY, WALL } from '../src/generator.js';
 import {
   startLevel, tapCell, tick, distToEdge, heartTick, grantAdHeart, buyGoldPack,
-  awardClear, nextLevel, useHint, refillHearts, openShop, closeShop,
+  awardClear, nextLevel, useHint, refillHearts, openShop, closeShop, showPopup,
 } from '../src/logic.js';
 
 // Build a gd with hand-crafted pieces (bypasses the generator).
@@ -381,4 +381,17 @@ test('buyGoldPack bounds-checks the pack index', () => {
   assert.equal(gd.gold, 10);
   assert.equal(buyGoldPack(gd, balance, 0), true);
   assert.equal(gd.gold, 10 + balance.goldPacks[0].gold);
+});
+
+test('showPopup raises the celebration card and tick counts it down on any screen', () => {
+  const gd = makeGd(1, 1, [{ cells: [0], dir: 0 }]);
+  gd.screen = 'shop';
+  showPopup(gd, balance, '+500');
+  assert.equal(gd.popupText, '+500');
+  assert.equal(gd.popupT, balance.popupDur);
+  runTicks(gd, balance.popupDur / 2);
+  assert.ok(gd.popupT > 0 && gd.popupT < balance.popupDur, 'mid-flight');
+  runTicks(gd, balance.popupDur);
+  assert.equal(gd.popupT, 0);
+  assert.equal(gd.popupText, '', 'card cleared after the countdown');
 });

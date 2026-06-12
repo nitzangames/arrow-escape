@@ -468,6 +468,32 @@ function renderShop(c, gd, balance) {
   }
   drawButton(c, BUTTONS.shop[3], false, false, 'BACK', FONT.bodyLarge);
   drawVersion(c, true);
+
+  // Purchase celebration card: scales in with a small overshoot bounce,
+  // fades out over the last 0.2 s. Dismissed early by any tap (main).
+  if (gd.popupT > 0 && gd.popupText) {
+    const age = balance.popupDur - gd.popupT;
+    let scale;
+    if (age < 0.15) scale = (age / 0.15) * 1.08;
+    else if (age < 0.3) scale = 1.08 - 0.08 * ((age - 0.15) / 0.15);
+    else scale = 1;
+    c.save();
+    c.globalAlpha = Math.min(1, gd.popupT / 0.2);
+    c.translate(W / 2, 940);
+    c.scale(scale, scale);
+    c.fillStyle = THEME.ink;
+    roundRect(c, -320, -180, 640, 360, 44);
+    c.fill();
+    c.fillStyle = THEME.glyph;
+    c.textAlign = 'center';
+    c.font = FONT.heading;
+    c.fillText('● ' + gd.popupText, 0, -20);
+    c.fillStyle = THEME.accent;
+    c.font = FONT.subheading;
+    c.fillText('GOLD!', 0, 90);
+    c.restore();
+    c.globalAlpha = 1;
+  }
 }
 
 export function render(ctx, gd, balance) {

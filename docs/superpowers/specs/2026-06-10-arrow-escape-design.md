@@ -91,6 +91,8 @@ Reachable from the menu and from the out-of-hearts overlay. Three packs (constan
 
 Each purchase calls `PlaySDK.nbucks.spend({ amount, itemDescription, itemId })` inside try/catch. **Platform pitfalls (documented, real):** the method is exactly `PlaySDK.nbucks.spend` (a misnamed call fails silently — Bubble Bloom shipped a dead shop this way), and the promise **rejects** on cancel/insufficient funds rather than resolving with a failure flag — any rejection means nothing was charged; show a neutral "purchase cancelled" state, never an error.
 
+**Purchase feedback:** a successful pack purchase pops a centered celebration card over the shop — dark card, "● +N" / "GOLD!" in glyph color, scales in with a small overshoot bounce, auto-dismisses after `balance.popupDur` (1.5 s) or on any tap, with the clear fanfare. Cancelled purchases keep the quiet inline "purchase cancelled" text (neutral per platform convention).
+
 **Dev fallback (no PlaySDK):** purchases succeed for free and rewarded ads auto-grant, so all flows are testable locally and in Playwright.
 
 - **Deferred to later versions:** daily challenges, streaks, level select, additional themes.

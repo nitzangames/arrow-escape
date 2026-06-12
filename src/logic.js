@@ -73,6 +73,11 @@ export function tapCell(gd, balance, c, r) {
 // Callers must clamp dt (the rAF loop caps at 1/30 s) — a multi-second dt
 // from a tab restore would expire timers and snap slides in one tick.
 export function tick(gd, balance, dt) {
+  if (gd.popupT > 0) {
+    gd.popupT = Math.max(0, gd.popupT - dt);
+    if (gd.popupT === 0) gd.popupText = '';
+    gd.dirty = true;
+  }
   if (gd.screen === 'clear' && gd.clearFade < 1) {
     gd.clearFade = Math.min(1, gd.clearFade + dt * 3);
     gd.dirty = true;
@@ -245,5 +250,13 @@ export function openShop(gd) {
 export function closeShop(gd) {
   if (gd.screen !== 'shop') return;
   gd.screen = gd.shopFrom;
+  gd.dirty = true;
+}
+
+// Celebration card over the shop after a confirmed purchase. Counts down in
+// tick; any tap dismisses it early (main's pointerdown swallows that tap).
+export function showPopup(gd, balance, text) {
+  gd.popupText = text;
+  gd.popupT = balance.popupDur;
   gd.dirty = true;
 }

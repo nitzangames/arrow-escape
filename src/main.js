@@ -2,7 +2,7 @@ import { balance } from './balance.js';
 import { allocGameData } from './gameData.js';
 import {
   startLevel, nextLevel, tapCell, tick, useHint, refillHearts,
-  heartTick, grantAdHeart, buyGoldPack, openShop, closeShop,
+  heartTick, grantAdHeart, buyGoldPack, openShop, closeShop, showPopup,
 } from './logic.js';
 import { render, hitTest } from './render.js';
 import { findHint } from './generator.js';
@@ -80,6 +80,12 @@ canvas.addEventListener('pointerdown', (e) => {
   initAudio();
   const x = (e.clientX - canvasRect.left) * (canvas.width / canvasRect.width);
   const y = (e.clientY - canvasRect.top) * (canvas.height / canvasRect.height);
+  if (gd.popupT > 0) { // any tap dismisses the purchase celebration card
+    gd.popupT = 0;
+    gd.popupText = '';
+    gd.dirty = true;
+    return;
+  }
   const hit = hitTest(gd, x, y);
   if (!hit) return;
   gd.dirty = true;
@@ -130,7 +136,8 @@ async function onButton(id) {
       busy = false;
       if (ok) {
         buyGoldPack(gd, balance, i);
-        gd.shopMsg = '+' + pack.gold + ' gold!';
+        showPopup(gd, balance, '+' + pack.gold);
+        sfx(gd, 'fanfare');
         saveProgress();
       } else {
         gd.shopMsg = 'purchase cancelled';

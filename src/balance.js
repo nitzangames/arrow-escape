@@ -1,4 +1,4 @@
-export const VERSION = 'v0.1.28';
+export const VERSION = 'v0.1.29';
 
 export const balance = {
   canvasW: 1080,
@@ -49,6 +49,7 @@ export const balance = {
   bumpDist: 26,           // px of bump travel at the 150px reference cell size
   shakeDur: 0.3,          // s
   clearDelay: 0.6,        // s between last escape and the clear overlay
+  popupDur: 1.5,          // s the purchase celebration card stays up
   failDelay: 0.6,         // s between fatal bump and the fail overlay
   maxFlights: 16,
 };
