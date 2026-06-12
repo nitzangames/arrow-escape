@@ -120,7 +120,7 @@ export function tick(gd, balance, dt) {
   // bump, and with current balance all slides drain well within failDelay.
   if (gd.failTimer > 0) {
     gd.failTimer -= dt;
-    if (gd.failTimer <= 0) gd.screen = 'fail';
+    if (gd.failTimer <= 0 && gd.hearts === 0) gd.screen = 'fail';
     animating = true;
   }
 
@@ -164,12 +164,18 @@ export function refillHearts(gd, balance) {
   gd.gold -= balance.refillCost;
   gd.hearts = balance.heartCap;
   gd.heartT = null;
-  if (gd.screen === 'fail') {
-    gd.failTimer = 0;
-    gd.screen = 'game';
-  }
+  liftGate(gd);
   gd.dirty = true;
   return true;
+}
+
+// A heart became available — cancel any pending or active out-of-hearts gate.
+// If the shop is covering a gated board, retarget its return to the live game.
+function liftGate(gd) {
+  if (gd.hearts <= 0) return;
+  gd.failTimer = 0;
+  if (gd.screen === 'fail') gd.screen = 'game';
+  else if (gd.screen === 'shop' && gd.shopFrom === 'fail') gd.shopFrom = 'game';
 }
 
 // The single heart-regen authority. `now` is injected (epoch ms) — pure logic
@@ -179,22 +185,28 @@ export function refillHearts(gd, balance) {
 export function heartTick(gd, balance, now) {
   let changed = false;
   if (gd.hearts >= balance.heartCap) {
+    if (gd.hearts > balance.heartCap) { gd.hearts = balance.heartCap; changed = true; } // corrupted save
     if (gd.heartT !== null) { gd.heartT = null; changed = true; }
+    if (changed) gd.dirty = true;
     return changed;
   }
   if (gd.heartT === null) {
     gd.heartT = now + balance.heartRegenMs;
     return true;
   }
+  // Clock corrected backwards (timer set under a fast clock) or corrupted
+  // save (NaN): never make the player wait more than one full regen period.
+  // The !(<=) form also catches NaN.
+  if (!(gd.heartT <= now + balance.heartRegenMs)) {
+    gd.heartT = now + balance.heartRegenMs;
+    changed = true;
+  }
   while (gd.heartT !== null && now >= gd.heartT) {
     gd.hearts++;
     changed = true;
     gd.heartT = gd.hearts < balance.heartCap ? gd.heartT + balance.heartRegenMs : null;
   }
-  if (changed && gd.screen === 'fail' && gd.hearts > 0) {
-    gd.failTimer = 0;
-    gd.screen = 'game';
-  }
+  if (changed) liftGate(gd);
   if (changed) gd.dirty = true;
   return changed;
 }
@@ -203,13 +215,11 @@ export function heartTick(gd, balance, now) {
 // The SDK call (and its dev fallback) lives in main.js — by the time this
 // runs, the ad was already watched.
 export function grantAdHeart(gd, balance) {
+  if (gd.screen !== 'fail' && gd.screen !== 'menu') return false;
   if (gd.adUsedThisGate || gd.hearts >= balance.heartCap) return false;
   gd.hearts++;
   gd.adUsedThisGate = true;
-  if (gd.screen === 'fail') {
-    gd.failTimer = 0;
-    gd.screen = 'game';
-  }
+  liftGate(gd);
   gd.dirty = true;
   return true;
 }
@@ -217,8 +227,11 @@ export function grantAdHeart(gd, balance) {
 // Credit a purchased pack. The NBucks spend (and rejection handling) lives in
 // main.js — this runs only after the platform confirmed the charge.
 export function buyGoldPack(gd, balance, packIndex) {
-  gd.gold += balance.goldPacks[packIndex].gold;
+  const pack = balance.goldPacks[packIndex];
+  if (!pack) return false;
+  gd.gold += pack.gold;
   gd.dirty = true;
+  return true;
 }
 
 export function openShop(gd) {

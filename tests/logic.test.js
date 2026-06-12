@@ -307,3 +307,76 @@ test('openShop/closeShop round-trip and preserve a gated board', () => {
   closeShop(gd);
   assert.equal(gd.screen, 'menu');
 });
+
+test('a heart arriving while the shop covers the gate lifts the gate underneath', () => {
+  const gd = makeGd(2, 1, [
+    { cells: [0], dir: 1 },
+    { cells: [1], dir: 3 },
+  ]);
+  gd.screen = 'fail';
+  gd.hearts = 0;
+  gd.heartT = 1000;
+  openShop(gd);
+  assert.equal(heartTick(gd, balance, 2000), true);
+  assert.equal(gd.hearts, 1);
+  assert.equal(gd.screen, 'shop', 'shop stays open');
+  closeShop(gd);
+  assert.equal(gd.screen, 'game', 'returns to the resumed board, not a stale gate');
+});
+
+test('a heart arriving while the gate is still pending cancels it', () => {
+  const gd = makeGd(2, 1, [
+    { cells: [0], dir: 1 },
+    { cells: [1], dir: 3 },
+  ]);
+  gd.hearts = 1;
+  gd.heartT = 1000;
+  assert.equal(tapCell(gd, balance, 0, 0), 'bump'); // hearts -> 0, failTimer starts
+  assert.ok(gd.failTimer > 0);
+  assert.equal(heartTick(gd, balance, 2000), true); // regen lands in the window
+  assert.equal(gd.hearts, 1);
+  runTicks(gd, 1);
+  assert.equal(gd.screen, 'game', 'gate never fires once a heart is back');
+});
+
+test('heartTick repairs far-future and NaN timers', () => {
+  const gd = makeGd(1, 1, [{ cells: [0], dir: 0 }]);
+  const HOUR = balance.heartRegenMs;
+  gd.hearts = 1;
+  gd.heartT = 1000 + 100 * HOUR; // clock was corrected backwards
+  assert.equal(heartTick(gd, balance, 1000), true);
+  assert.equal(gd.heartT, 1000 + HOUR, 'never wait more than one period');
+  gd.heartT = NaN; // corrupted save
+  assert.equal(heartTick(gd, balance, 2000), true);
+  assert.equal(gd.heartT, 2000 + HOUR);
+});
+
+test('heartTick clamps an overfull corrupted pool', () => {
+  const gd = makeGd(1, 1, [{ cells: [0], dir: 0 }]);
+  gd.hearts = 99;
+  gd.heartT = null;
+  assert.equal(heartTick(gd, balance, 1000), true);
+  assert.equal(gd.hearts, balance.heartCap);
+});
+
+test('grantAdHeart works from the menu and refuses other screens', () => {
+  const gd = makeGd(1, 1, [{ cells: [0], dir: 0 }]);
+  gd.screen = 'menu';
+  gd.hearts = 0;
+  gd.adUsedThisGate = false;
+  assert.equal(grantAdHeart(gd, balance), true);
+  assert.equal(gd.screen, 'menu', 'no screen flip from the menu');
+  gd.screen = 'game';
+  gd.adUsedThisGate = false;
+  gd.hearts = 1;
+  assert.equal(grantAdHeart(gd, balance), false, 'no ad grants mid-game');
+});
+
+test('buyGoldPack bounds-checks the pack index', () => {
+  const gd = makeGd(1, 1, [{ cells: [0], dir: 0 }]);
+  gd.gold = 10;
+  assert.equal(buyGoldPack(gd, balance, 7), false);
+  assert.equal(gd.gold, 10);
+  assert.equal(buyGoldPack(gd, balance, 0), true);
+  assert.equal(gd.gold, 10 + balance.goldPacks[0].gold);
+});
