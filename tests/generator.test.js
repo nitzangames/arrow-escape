@@ -6,7 +6,7 @@ import {
   buildBoard, simulateWaves, scoreBoard, isBreather,
   pickIndexForLevel, generateLevel, findHint,
 } from '../src/generator.js';
-import { maskFor } from '../src/shapes.js';
+import { maskFor, shapeFor } from '../src/shapes.js';
 
 // Hand-built board: defs = [{cells, dir}, ...] — sparse boards are fine for
 // the analysis helpers (only the generator promises full fill).
@@ -191,7 +191,7 @@ test('generateLevel is deterministic, full, and always solvable', () => {
 });
 
 test('generation never wedges across the whole early game', () => {
-  for (let lvl = 1; lvl <= 120; lvl++) {
+  for (let lvl = 1; lvl <= 200; lvl++) {
     const g = generateLevel(lvl, balance);
     assert.ok(!Array.from(g.grid).includes(EMPTY), `level ${lvl} has holes`);
   }
@@ -270,5 +270,25 @@ test('every shaped level through 100 is shaped, full, and solvable', () => {
     assert.ok(walls > 0, `level ${lvl} has no walls`);
     assertWellFormed(g, g.cols, g.rows, rampFor(lvl, balance).maxLen);
     assert.ok(simulateWaves(g.pieces, g.grid, g.cols, g.rows).cleared, `level ${lvl} not solvable`);
+  }
+});
+
+test('shaped 10x14 level is deterministic through the trimmed-dims path', () => {
+  const a = generateLevel(22, balance);
+  const b = generateLevel(22, balance);
+  assert.equal(a.shape, 'hourglass');
+  assert.deepEqual(a.pieces, b.pieces);
+  assert.deepEqual(Array.from(a.grid), Array.from(b.grid));
+});
+
+test('arrowhead directions are roughly balanced on rectangle boards', () => {
+  const dirs = [0, 0, 0, 0];
+  for (let lvl = 20; lvl <= 60; lvl++) {
+    if (shapeFor(lvl, balance)) continue;
+    for (const p of generateLevel(lvl, balance).pieces) dirs[p.dir]++;
+  }
+  const total = dirs.reduce((a, b) => a + b, 0);
+  for (const d of dirs) {
+    assert.ok(d / total > 0.15, `direction share skewed: ${JSON.stringify(dirs)}`);
   }
 });

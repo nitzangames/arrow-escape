@@ -100,10 +100,12 @@ function staticallyAlive(grid, cols, rows, cells) {
       || corridorFree(grid, cols, rows, h2 % cols, (h2 / cols) | 0, endDir(cols, h2, cells[cells.length - 2]));
 }
 
-// Tiling seed order: cells with NO wall-free corridor (they can never be a
-// head, e.g. a diamond's stair corners) come first, while their neighbors
-// are still empty to grow into; the rest follow in scan order.
-function deadFirstSeedOrder(cols, rows, mask) {
+// Tiling seed classes: cells with NO wall-free corridor (they can never be a
+// head, e.g. a diamond's stair corners) must seed first, while their
+// neighbors are still empty to grow into. The rest are shuffled per attempt
+// in buildBoard — seeding in scan order would pin every path's seed end to
+// the top-left frontier, skewing arrowheads toward up/left.
+function seedClasses(cols, rows, mask) {
   const n = cols * rows;
   const grid = new Int16Array(n).fill(EMPTY);
   if (mask) for (let i = 0; i < n; i++) if (!mask[i]) grid[i] = WALL;
@@ -116,7 +118,7 @@ function deadFirstSeedOrder(cols, rows, mask) {
     }
     (alive ? rest : dead).push(i);
   }
-  return dead.concat(rest);
+  return { dead, rest };
 }
 
 // Phase 1 — tile: partition the open cells into 4-connected paths via random
@@ -161,6 +163,41 @@ function tile(rng, cols, rows, minLen, maxLen, longBias, mask, seedOrder) {
   return { grid, paths };
 }
 
+// Merge pass: tiling leaves boxed-in singles ("dots"), especially in shaped
+// boards' crevices. Absorb each single into an adjacent path end when the
+// merged path stays within maxLen and statically alive — shaped boards drop
+// from ~38% to ~21% dots (median) with no packing-reliability cost.
+function mergeSingles(grid, cols, rows, paths, maxLen) {
+  for (let p = 0; p < paths.length; p++) {
+    if (paths[p] === null || paths[p].length !== 1) continue;
+    const cell = paths[p][0];
+    const c = cell % cols, r = (cell / cols) | 0;
+    for (let d = 0; d < 4; d++) {
+      const nx = c + DIRS[d][0], ny = r + DIRS[d][1];
+      if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+      const q = grid[ny * cols + nx];
+      if (q < 0 || q === p || paths[q] === null) continue;
+      const target = paths[q];
+      if (target.length + 1 > maxLen) continue;
+      const ni = ny * cols + nx;
+      let merged = null;
+      if (target[0] === ni) merged = [cell, ...target];
+      else if (target[target.length - 1] === ni) merged = [...target, cell];
+      else continue; // adjacent to the path's middle — can't extend there
+      if (!staticallyAlive(grid, cols, rows, merged)) continue;
+      paths[q] = merged;
+      grid[cell] = q;
+      paths[p] = null;
+      break;
+    }
+  }
+  const out = [];
+  const remap = new Int16Array(paths.length).fill(-1);
+  paths.forEach((cells, i) => { if (cells) { remap[i] = out.length; out.push(cells); } });
+  for (let i = 0; i < grid.length; i++) if (grid[i] >= 0) grid[i] = remap[grid[i]];
+  return out;
+}
+
 // During peeling: ray from (c,r) is free if it meets no wall and no cell of
 // a still-remaining piece (removed pieces and own cells don't block).
 function peelRayFree(grid, cols, rows, removed, selfId, c, r, dir) {
@@ -177,8 +214,11 @@ function peelRayFree(grid, cols, rows, removed, selfId, c, r, dir) {
 
 // Phase 2 — peel: repeatedly pick (seeded-randomly) a piece one of whose end
 // continuations is a clear ray, orient its head to that end, remove it.
-// Completing the peel proves the board solvable. Returns heads per path, or
-// null if no piece is removable (caller re-tiles).
+// When both ends qualify the choice is random too — always preferring the
+// walk-seed end would skew arrowheads toward up/left (seed ends point away
+// from the body, i.e. back toward where seeding started). Completing the
+// peel proves the board solvable. Returns heads per path, or null if no
+// piece is removable (caller re-tiles).
 function peel(rng, grid, cols, rows, paths) {
   const removed = new Uint8Array(paths.length);
   const heads = new Array(paths.length).fill(null);
@@ -190,7 +230,9 @@ function peel(rng, grid, cols, rows, paths) {
       const cells = paths[p];
       if (cells.length === 1) {
         const c = cells[0] % cols, r = (cells[0] / cols) | 0;
-        for (let d = 0; d < 4; d++) {
+        const d0 = (rng() * 4) | 0;
+        for (let k = 0; k < 4; k++) {
+          const d = (d0 + k) % 4;
           if (peelRayFree(grid, cols, rows, removed, p, c, r, d)) {
             options.push([p, 0, d]);
             break;
@@ -199,14 +241,12 @@ function peel(rng, grid, cols, rows, paths) {
       } else {
         const h1 = cells[0], h2 = cells[cells.length - 1];
         const d1 = endDir(cols, h1, cells[1]);
-        if (peelRayFree(grid, cols, rows, removed, p, h1 % cols, (h1 / cols) | 0, d1)) {
-          options.push([p, 0, d1]);
-        } else {
-          const d2 = endDir(cols, h2, cells[cells.length - 2]);
-          if (peelRayFree(grid, cols, rows, removed, p, h2 % cols, (h2 / cols) | 0, d2)) {
-            options.push([p, 1, d2]);
-          }
-        }
+        const d2 = endDir(cols, h2, cells[cells.length - 2]);
+        const ok1 = peelRayFree(grid, cols, rows, removed, p, h1 % cols, (h1 / cols) | 0, d1);
+        const ok2 = peelRayFree(grid, cols, rows, removed, p, h2 % cols, (h2 / cols) | 0, d2);
+        if (ok1 && ok2) options.push(rng() < 0.5 ? [p, 0, d1] : [p, 1, d2]);
+        else if (ok1) options.push([p, 0, d1]);
+        else if (ok2) options.push([p, 1, d2]);
       }
     }
     if (options.length === 0) return null;
@@ -218,18 +258,24 @@ function peel(rng, grid, cols, rows, paths) {
   return heads;
 }
 
-// Build a full board: tile, then peel; retry (bounded, same rng stream —
-// still deterministic) until both phases succeed. Returns null if every
-// attempt fails — callers must skip the candidate. `mask` (optional
-// Uint8Array, 1 = open) carves the playable shape.
+// Build a full board: tile, merge stray singles, then peel; retry (bounded,
+// same rng stream — still deterministic) until all phases succeed. Returns
+// null if every attempt fails — callers must skip the candidate. `mask`
+// (optional Uint8Array, 1 = open) carves the playable shape.
 export function buildBoard(rng, cols, rows, minLen, maxLen, longBias, mask) {
-  const seedOrder = deadFirstSeedOrder(cols, rows, mask);
+  const { dead, rest } = seedClasses(cols, rows, mask);
   for (let attempt = 0; attempt < 400; attempt++) {
-    const t = tile(rng, cols, rows, minLen, maxLen, longBias, mask, seedOrder);
+    const shuffled = rest.slice();
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = (rng() * (i + 1)) | 0;
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const t = tile(rng, cols, rows, minLen, maxLen, longBias, mask, dead.concat(shuffled));
     if (!t) continue;
-    const heads = peel(rng, t.grid, cols, rows, t.paths);
+    const paths = mergeSingles(t.grid, cols, rows, t.paths, maxLen);
+    const heads = peel(rng, t.grid, cols, rows, paths);
     if (!heads) continue;
-    const pieces = t.paths.map((cells, p) => ({
+    const pieces = paths.map((cells, p) => ({
       cells: heads[p].end === 0 ? cells.slice() : cells.slice().reverse(),
       dir: heads[p].dir,
     }));
@@ -327,6 +373,9 @@ export function generateLevel(level, balance) {
     if (!built) continue;
     boards.push(built);
     scores.push(scoreBoard(built.pieces, built.grid, cols, rows, balance.scoreWeights));
+  }
+  if (boards.length === 0) {
+    throw new Error(`generateLevel(${level}): every candidate failed to pack`);
   }
   const pick = pickIndexForLevel(level, scores, balance);
   return {

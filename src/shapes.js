@@ -15,7 +15,8 @@ const heartIn = (x, y) => {
 export const SHAPES = {
   heart:     { inside: heartIn, bbox: [-1.139, 1.139, -1.0, 1.236] },
   // 1.3 (not the pointier 1.02): 4-wide tips are the narrowest the tiler can
-  // reliably pack at 10x14 — 1.02 leaves 32 dead cells and never packs.
+  // reliably pack at 10x14 — 1.02 leaves 32 dead cells and never packs. A few
+  // % of candidates may still fail; the 8-candidate pool absorbs that.
   diamond:   { inside: (x, y) => Math.abs(x) + Math.abs(y) <= 1.3, bbox: [-1, 1, -1, 1] },
   plus:      { inside: (x, y) => Math.abs(x) <= 0.34 || Math.abs(y) <= 0.34, bbox: [-1, 1, -1, 1] },
   donut:     { inside: (x, y) => !(Math.abs(x) <= 0.45 && Math.abs(y) <= 0.45), bbox: [-1, 1, -1, 1] },
