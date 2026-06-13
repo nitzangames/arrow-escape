@@ -1,6 +1,6 @@
 # Arrow Escape — Design Spec (GDD)
 
-Date: 2026-06-10 · rev 6 (2026-06-12): difficulty waves — oscillating curve from level 4, snakes to 16 cells, boards to 12×16, hardest-of-pool selection (reference-game difficulty). rev 5: monetization. rev 4: shapes + bigger boards
+Date: 2026-06-10 · rev 7 (2026-06-13): pre-baked levels — first 3000 generated & validated at build time, shipped as a data file, runtime fallback beyond. rev 6: difficulty waves. rev 5: monetization. rev 4: shapes + bigger boards
 Status: approved design
 Platform: nitzan.games (1080×1920 portrait canvas, sandboxed iframe, PlaySDK)
 Slug: `arrow-escape` · Title: **Arrow Escape**
@@ -56,6 +56,16 @@ The first full-size 20×27 board appears at **level 15** (the tier-2 wave peak);
 - **No self-crossing arrows (a hard guarantee):** an arrow whose exit ray passes through its own body slides out fine (the body vacates along the track) but *reads* as a guaranteed self-collision — confusing. The tiling walk forbids this by construction: it never extends a snake into a cell that (a) sits on the seed end's exit ray or (b) whose own forward exit ray already crosses the body. Every prefix of such a walk is also clean, so the shrink preserves it, and the single-cell merge pass re-checks. Both ends of every snake are therefore collision-clean, so whichever end the peel makes the head, no arrow ever points along its own body (verified: 0 of 28,512 pieces across levels 1–600).
 - **Shape scheduling (in `shapes.js`):** `shapeFor(level)` returns a shape key or null — a level is shaped iff `level ≥ 10 && (level − 10) % 3 === 0`; shaped levels use `SHAPE_ORDER[((level − 10) / 3) % 6]` with `SHAPE_ORDER = [heart, diamond, plus, donut, hourglass, triangle]`. `maskFor(shapeKey, cols, rows)` samples the shape's implicit formula at cell centers over its bounding box → `Uint8Array` (1 = open). `generateLevel` passes the mask to every candidate build for that level, requesting the wave's dims clamped by the shape's optional per-shape cap (`min(wave dims, shape cap)`; only the diamond is capped, at 10×14).
 - **Candidate scoring drives the wave:** for level N, generate `balance.candidates` (10) boards from seeds `hash(N, 0..9)`, score each, and pick by *percentile within the candidate pool* at the wave position (0.3 at a wave's start → 1.0 at its peak; tutorial levels take the easiest). Distribution-relative selection auto-calibrates to whatever scores each board size can produce.
+
+### Pre-baked levels (build-time generation)
+
+Levels 1–`bakeCount` (**3000**) are generated and validated **once at build time** by `scripts/bake-levels.js` and shipped as `levels.json.gz` (~1 MB gzipped). At runtime, `getLevel(level, balance, baked)` returns the baked board for `level ≤ bakeCount`, or falls back to live `generateLevel` beyond it — so the "endless" pillar holds for the rare player past 3000.
+
+- **Why bake:** (1) eliminates the ~50–100 ms level-start generation hitch on big boards — a baked board is a data lookup, not a 10-candidate search; (2) lets the bake step **exhaustively validate every shipped level** (full coverage, solvable by wave-removal, zero self-crossing arrows, dims within the wave range) rather than the statistical sampling the unit tests do — a bad board can never reach a player; (3) **freezes shipped levels**, so a later generator/balance tweak no longer silently reshuffles everyone's boards — re-baking is a deliberate, reviewed step.
+- **Format:** `levels.json.gz` = gzip of a JSON array indexed by `level − 1`; each entry is `{ c, r, s, p }` = cols, rows, shape-key-or-null, and pieces as `[dir, ...cellIndices]`. Walls and the grid are **not stored** — they rehydrate by filling the grid with `WALL` and stamping piece cells (full boards leave no `EMPTY`), which reproduces `generateLevel`'s grid exactly (verified, including shaped levels).
+- **Loading:** boot fetches `levels.json.gz` and inflates it with the built-in `DecompressionStream('gzip')` into a module array held on `gd.baked`. Any load failure (missing file, no `DecompressionStream`) leaves `gd.baked = null` and the game falls back to pure runtime generation — the data file is an optimization, never a hard dependency.
+- **Freshness guard:** a unit test inflates the shipped `levels.json.gz` (Node `zlib`) and asserts a sample of baked levels equals current `generateLevel` output exactly — so changing generation logic without re-baking fails the suite. Re-bake with `node scripts/bake-levels.js` (writes the file at the game root, ~50 s for 3000 levels).
+- **Packaging:** `levels.json.gz` ships at the game root; `scripts/` is excluded from the deploy zip.
 
 **Difficulty score** of a board (weights in `balance.js`):
 
@@ -136,16 +146,19 @@ ArrowEscape/
   index.html
   meta.json            # platform metadata
   thumbnail.png        # 512×512, title text rendered in
-  .zipignore           # excludes mockups/ docs/ tests/ CLAUDE.md etc.
+  levels.json.gz       # baked levels 1–3000 (gzipped); rebuilt by scripts/bake-levels.js
+  .zipignore           # excludes mockups/ docs/ tests/ scripts/ CLAUDE.md etc.
   src/
     balance.js         # ALL tuning constants + VERSION (bumped every commit)
     shapes.js          # shape formulas, mask sampler, per-level shape schedule (pure)
-    generator.js       # rng, reverse-construction builder, scorer, candidate picker (pure)
+    generator.js       # rng, builder, scorer, candidate picker, getLevel(baked-or-generate) (pure)
     gameData.js        # allocGameData(balance) — single mutable state object
     logic.js           # pure: tap resolution, path checks, animation state, hearts, win/fail
     render.js          # read-only draw; snakes stroked as rounded polylines per dirty frame
     audio.js           # procedural Web Audio SFX; init on first gesture; suspend on pause
-    main.js            # boot (await PlaySDK load), rAF loop, pause/resume, screenshot mode
+    main.js            # boot (await PlaySDK + load baked levels), rAF loop, pause/resume
+  scripts/
+    bake-levels.js     # node: generate+validate levels 1–3000 -> levels.json.gz (dev only)
   tests/
     generator.test.js  # node --test, zero dependencies
   mockups/
