@@ -314,31 +314,19 @@ test('the diamond cap flows through generateLevel on a large-request diamond', (
   assert.ok(simulateWaves(g.pieces, g.grid, g.cols, g.rows).cleared);
 });
 
-test('self-pointing arrowheads are rare (clean-head peel + flip repair)', () => {
-  const rate = (lo, hi) => {
-    let cross = 0, total = 0;
-    for (let lvl = lo; lvl <= hi; lvl++) {
-      const g = generateLevel(lvl, balance);
-      for (const piece of g.pieces) {
-        total++;
-        const head = piece.cells[0];
-        let x = head % g.cols + DIRS[piece.dir][0];
-        let y = ((head / g.cols) | 0) + DIRS[piece.dir][1];
-        while (x >= 0 && x < g.cols && y >= 0 && y < g.rows) {
-          if (piece.cells.includes(y * g.cols + x)) { cross++; break; }
-          x += DIRS[piece.dir][0];
-          y += DIRS[piece.dir][1];
-        }
+test('no arrowhead ever points along its own body (zero self-crossing)', () => {
+  for (let lvl = 1; lvl <= 120; lvl++) {
+    const g = generateLevel(lvl, balance);
+    for (const piece of g.pieces) {
+      const head = piece.cells[0];
+      let x = head % g.cols + DIRS[piece.dir][0];
+      let y = ((head / g.cols) | 0) + DIRS[piece.dir][1];
+      while (x >= 0 && x < g.cols && y >= 0 && y < g.rows) {
+        assert.ok(!piece.cells.includes(y * g.cols + x),
+          `level ${lvl}: arrow at cell ${head} crosses its own body`);
+        x += DIRS[piece.dir][0];
+        y += DIRS[piece.dir][1];
       }
     }
-    return cross / total;
-  };
-  // Early small boards — where a self-pointing arrow most confuses a learner —
-  // stay nearly clean (~1.4% at levels 1-8).
-  assert.ok(rate(1, 12) < 0.035, 'early levels nearly free of self-pointing heads');
-  // Across the range the rate is low (was 6.7% before the clean-head peel
-  // preference + flip repair). Big 20x27 peak boards carry a few more, but
-  // those are forced: flipping them breaks solvability, or they are true
-  // spirals (both ends cross) — a legitimate reference-game piece.
-  assert.ok(rate(1, 60) < 0.055, 'self-pointing heads remain rare overall');
+  }
 });

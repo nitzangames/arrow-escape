@@ -90,6 +90,31 @@ function sampleLen(rng, minLen, maxLen, longBias) {
 
 // Direction a head at `a` points when its neighbor in the path is `behind`:
 // the continuation of the path's end segment.
+// True if the straight ray from cell `idx` in `dir` reaches `target` within
+// `limit` steps (before leaving the board). Used to keep snake walks from
+// curling in front of their own ends, so no generated arrow ever points along
+// its own body. `limit` is safely maxLen: a body cell sits at most maxLen
+// straight-line cells away (the body is a connected path of ≤ maxLen cells).
+function rayReaches(cols, rows, idx, dir, target, limit) {
+  let x = (idx % cols) + DIRS[dir][0], y = ((idx / cols) | 0) + DIRS[dir][1];
+  for (let s = 0; s < limit && x >= 0 && x < cols && y >= 0 && y < rows; s++) {
+    if (y * cols + x === target) return true;
+    x += DIRS[dir][0]; y += DIRS[dir][1];
+  }
+  return false;
+}
+
+// True if the ray from `idx` in `dir` hits any cell currently owned by
+// `pieceId` (its own body) within `limit` steps (see rayReaches).
+function rayHitsOwnBody(grid, cols, rows, pieceId, idx, dir, limit) {
+  let x = (idx % cols) + DIRS[dir][0], y = ((idx / cols) | 0) + DIRS[dir][1];
+  for (let s = 0; s < limit && x >= 0 && x < cols && y >= 0 && y < rows; s++) {
+    if (grid[y * cols + x] === pieceId) return true;
+    x += DIRS[dir][0]; y += DIRS[dir][1];
+  }
+  return false;
+}
+
 function endDir(cols, a, behind) {
   const dc = (a % cols) - (behind % cols);
   const dr = ((a / cols) | 0) - ((behind / cols) | 0);
@@ -143,7 +168,12 @@ function seedClasses(cols, rows, mask) {
 }
 
 // Phase 1 — tile: partition the open cells into 4-connected paths via random
-// walks (no ray constraints), shrinking each path until statically alive.
+// walks, shrinking each path until statically alive. The walk maintains a
+// both-ends-clean invariant so NO snake can ever point its arrowhead along
+// its own body (a confusing "it will hit itself" read): every step rejects a
+// candidate cell that (a) lands on the seed end's exit ray or (b) whose own
+// forward exit ray already crosses the body. Every prefix of such a walk is
+// also clean, so the staticallyAlive shrink preserves the property.
 // Returns null only if a lone cell ends up with no corridor in any direction
 // and no room to grow (rare; the caller just retries).
 function tile(rng, cols, rows, minLen, maxLen, longBias, mask, seedOrder) {
@@ -153,10 +183,12 @@ function tile(rng, cols, rows, minLen, maxLen, longBias, mask, seedOrder) {
   const paths = [];
   for (const s of seedOrder) {
     if (grid[s] !== EMPTY) continue;
+    const id = paths.length;
     const target = sampleLen(rng, minLen, maxLen, longBias);
     const cells = [s];
-    grid[s] = paths.length;
+    grid[s] = id;
     let cur = s;
+    let seedExitDir = -1; // seed end (cells[0]) exit ray dir; fixed once length >= 2
     while (cells.length < target) {
       const d0 = (rng() * 4) | 0;
       let next = -1;
@@ -167,13 +199,19 @@ function tile(rng, cols, rows, minLen, maxLen, longBias, mask, seedOrder) {
         if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
         const ni = ny * cols + nx;
         if (grid[ni] !== EMPTY) continue;
+        // (a) ni must not sit on the seed end's exit ray
+        if (seedExitDir >= 0 && rayReaches(cols, rows, cells[0], seedExitDir, ni, maxLen)) continue;
+        // (b) if ni became the head, its exit ray (continuing cur->ni) must
+        //     not already cross the body
+        if (rayHitsOwnBody(grid, cols, rows, id, ni, wd, maxLen)) continue;
         next = ni;
         break;
       }
       if (next < 0) break; // boxed in — settle for the length we got
       cells.push(next);
-      grid[next] = paths.length;
+      grid[next] = id;
       cur = next;
+      if (cells.length === 2) seedExitDir = endDir(cols, cells[0], cells[1]);
     }
     while (!staticallyAlive(grid, cols, rows, cells)) {
       if (cells.length === 1) return null; // stranded dead cell — retry board
@@ -206,6 +244,12 @@ function mergeSingles(grid, cols, rows, paths, maxLen) {
       else if (target[target.length - 1] === ni) merged = [...target, cell];
       else continue; // adjacent to the path's middle — can't extend there
       if (!staticallyAlive(grid, cols, rows, merged)) continue;
+      // Merging extends an end — reject if it would make either end's
+      // arrowhead point along the merged body (preserve the no-self-cross
+      // guarantee the walk established).
+      const e1 = merged[0], e2 = merged[merged.length - 1];
+      if (raySelfCrossing(cols, rows, merged, e1, endDir(cols, e1, merged[1]))
+        || raySelfCrossing(cols, rows, merged, e2, endDir(cols, e2, merged[merged.length - 2]))) continue;
       paths[q] = merged;
       grid[cell] = q;
       paths[p] = null;
@@ -247,12 +291,10 @@ function raySelfCrossing(cols, rows, cells, head, dir) {
 }
 
 // Phase 2 — peel: repeatedly pick (seeded-randomly) a piece one of whose end
-// continuations is a clear ray, orient its head to that end, remove it.
-// When both ends qualify, prefer the end whose ray doesn't cross the piece's
-// own body (no confusing self-pointing arrows); when both or neither are
-// clean, the choice is a coin flip — always preferring the walk-seed end
-// would skew arrowheads toward up/left. The coin is consumed in every
-// both-valid case so the rng stream stays aligned regardless of cleanliness.
+// continuations is a clear ray, orient its head to that end, remove it. When
+// both ends qualify the choice is a coin flip (always preferring the walk-seed
+// end would skew arrowheads toward up/left). Tiling already guarantees neither
+// end crosses its own body, so any head the peel picks is collision-clean.
 // Completing the peel proves the board solvable. Returns heads per path, or
 // null if no piece is removable (caller re-tiles).
 function peel(rng, grid, cols, rows, paths) {
@@ -260,8 +302,7 @@ function peel(rng, grid, cols, rows, paths) {
   const heads = new Array(paths.length).fill(null);
   let left = paths.length;
   while (left > 0) {
-    const clean = [];   // removable with a head that doesn't cross its own body
-    const dirty = [];   // removable only with a confusing self-pointing head
+    const options = [];
     for (let p = 0; p < paths.length; p++) {
       if (removed[p]) continue;
       const cells = paths[p];
@@ -270,10 +311,7 @@ function peel(rng, grid, cols, rows, paths) {
         const d0 = (rng() * 4) | 0;
         for (let k = 0; k < 4; k++) {
           const d = (d0 + k) % 4;
-          if (peelRayFree(grid, cols, rows, removed, p, c, r, d)) {
-            clean.push([p, 0, d]); // singles can't self-cross
-            break;
-          }
+          if (peelRayFree(grid, cols, rows, removed, p, c, r, d)) { options.push([p, 0, d]); break; }
         }
       } else {
         const h1 = cells[0], h2 = cells[cells.length - 1];
@@ -281,20 +319,11 @@ function peel(rng, grid, cols, rows, paths) {
         const d2 = endDir(cols, h2, cells[cells.length - 2]);
         const ok1 = peelRayFree(grid, cols, rows, removed, p, h1 % cols, (h1 / cols) | 0, d1);
         const ok2 = peelRayFree(grid, cols, rows, removed, p, h2 % cols, (h2 / cols) | 0, d2);
-        if (!ok1 && !ok2) continue;
-        const clean1 = ok1 && !raySelfCrossing(cols, rows, cells, h1, d1);
-        const clean2 = ok2 && !raySelfCrossing(cols, rows, cells, h2, d2);
-        if (ok1 && ok2) {
-          const coin = rng() < 0.5; // always consumed: keeps the stream aligned
-          if (clean1 !== clean2) clean.push(clean1 ? [p, 0, d1] : [p, 1, d2]);
-          else (clean1 ? clean : dirty).push(coin ? [p, 0, d1] : [p, 1, d2]);
-        } else if (ok1) (clean1 ? clean : dirty).push([p, 0, d1]);
-        else (clean2 ? clean : dirty).push([p, 1, d2]);
+        if (ok1 && ok2) options.push(rng() < 0.5 ? [p, 0, d1] : [p, 1, d2]);
+        else if (ok1) options.push([p, 0, d1]);
+        else if (ok2) options.push([p, 1, d2]);
       }
     }
-    // Deferring dirty options usually lets a later round free the piece's
-    // clean end; they stay available as fallback, so feasibility is unchanged.
-    const options = clean.length > 0 ? clean : dirty;
     if (options.length === 0) return null;
     const [p, end, dir] = options[(rng() * options.length) | 0];
     removed[p] = 1;
@@ -328,26 +357,9 @@ export function buildBoard(rng, cols, rows, minLen, maxLen, longBias, mask) {
     const grid = new Int16Array(cols * rows).fill(EMPTY);
     if (mask) for (let i = 0; i < grid.length; i++) if (!mask[i]) grid[i] = WALL;
     pieces.forEach((pc, id) => { for (const ci of pc.cells) grid[ci] = id; });
-    // Repair pass: the peel prefers clean heads, but a round whose only
-    // removable options self-cross still ships confusing arrows. Flip each
-    // survivor to its other end when that end is clean AND the flipped board
-    // still solves (re-verified by simulation). Iterated to a fixpoint: one
-    // successful flip can change the solve order enough to unblock another.
-    let flippedAny = true;
-    while (flippedAny) {
-      flippedAny = false;
-      for (let p = 0; p < pieces.length; p++) {
-        const pc = pieces[p];
-        if (pc.cells.length < 2) continue;
-        if (!raySelfCrossing(cols, rows, pc.cells, pc.cells[0], pc.dir)) continue;
-        const fc = pc.cells.slice().reverse();
-        const flipped = { cells: fc, dir: endDir(cols, fc[0], fc[1]) };
-        if (raySelfCrossing(cols, rows, fc, fc[0], flipped.dir)) continue; // other end no better
-        pieces[p] = flipped;
-        if (simulateWaves(pieces, grid, cols, rows).cleared) flippedAny = true;
-        else pieces[p] = pc; // flip broke the solve
-      }
-    }
+    // No self-cross repair needed: tiling + the merge guard guarantee neither
+    // end of any snake points along its own body, so every shipped arrowhead
+    // is collision-clean by construction.
     return { pieces, grid };
   }
   return null;
