@@ -7,6 +7,8 @@ import {
   pickIndexForLevel, generateLevel, findHint, getLevel,
 } from '../src/generator.js';
 import { maskFor, shapeFor } from '../src/shapes.js';
+import { gunzipSync } from 'node:zlib';
+import { readFileSync } from 'node:fs';
 
 // Hand-built board: defs = [{cells, dir}, ...] — sparse boards are fine for
 // the analysis helpers (only the generator promises full fill).
@@ -352,4 +354,17 @@ test('getLevel uses baked data when present and falls back to generation otherwi
   assert.deepEqual(getLevel(50, balance, baked).pieces, generateLevel(50, balance).pieces);
   // no baked data -> generated
   assert.deepEqual(getLevel(2, balance, null).pieces, generateLevel(2, balance).pieces);
+});
+
+test('shipped levels.json.gz is fresh (matches current generateLevel)', () => {
+  const baked = JSON.parse(gunzipSync(readFileSync(new URL('../levels.json.gz', import.meta.url))).toString());
+  assert.ok(baked.length >= balance.bakeCount, `baked ${baked.length} levels < bakeCount ${balance.bakeCount}`);
+  for (const lvl of [1, 2, 3, 9, 15, 67, 131, 500, 1500, 3000]) {
+    const g = generateLevel(lvl, balance);
+    const e = baked[lvl - 1];
+    assert.equal(e.c, g.cols, `level ${lvl} cols`);
+    assert.equal(e.r, g.rows, `level ${lvl} rows`);
+    assert.equal(e.s, g.shape || null, `level ${lvl} shape`);
+    assert.deepEqual(e.p, g.pieces.map((pc) => [pc.dir, ...pc.cells]), `level ${lvl} pieces stale — re-run scripts/bake-levels.js`);
+  }
 });

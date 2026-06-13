@@ -2,6 +2,7 @@
 docs/*
 mockups/*
 tests/*
+scripts/*
 GDD.md
 package.json
 .zipignore
