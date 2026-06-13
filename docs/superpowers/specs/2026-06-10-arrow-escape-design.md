@@ -33,16 +33,20 @@ Difficulty follows the reference games: hardness comes from **long winding snake
 - **From level 4:** wave position `t = ((level − 4) % wavePeriod) / (wavePeriod − 1)` with `wavePeriod: 8`. Board dims and max length interpolate (rounded) from the tier's floor to its peak as `t` goes 0 → 1; the selection percentile climbs `0.3 → 1.0` (the wave's last level ships the hardest of the candidate pool).
 - **Progression tiers** raise the ceilings:
 
-| Tier | Levels | Floor (dims / maxLen) | Peak (dims / maxLen) | Long bias |
-|------|--------|-----------------------|----------------------|-----------|
-| 1    | 4–27   | 7×10 / 6              | 10×14 / 12           | 0.5       |
-| 2    | 28–59  | 8×11 / 7              | 11×15 / 14           | 0.5       |
-| 3    | 60+    | 8×12 / 8              | 12×16 / 16           | 0.6       |
+| Tier | Levels  | Floor (dims / maxLen) | Peak (dims / maxLen) | Long bias |
+|------|---------|-----------------------|----------------------|-----------|
+| 1    | 4–27    | 7×10 / 6              | 10×14 / 12           | 0.5       |
+| 2    | 28–59   | 8×11 / 7              | 12×16 / 14           | 0.5       |
+| 3    | 60–91   | 9×13 / 8              | 15×20 / 16           | 0.6       |
+| 4    | 92–123  | 10×14 / 9             | 17×23 / 16           | 0.6       |
+| 5    | 124+    | 10×14 / 10            | 20×27 / 16           | 0.6       |
+
+The 20×27 ceiling (540 cells, ~43 canvas px cells) is the measured limit of the ray-to-edge mechanic: full-fill packing of hard solvable boards degrades sharply past ~22 columns (the unlock cascade dies — exits grow with the perimeter while cells grow with the area), and 30×40 was measured impossible for three different construction algorithms. Per-shape caps: diamond 10×14, heart 12×16 (wedges from 13×17 up), plus 17×23 (fails at 20×27); donut/hourglass/triangle scale to the full ceiling.
 
 - **minLen target is 2** everywhere past the tutorial: singles exist only as packing fallback (the merge pass keeps them rare).
 - **Blocking pressure:** `candidates: 10` and `scoreWeights: { wave: 1.5, blocked: 8.0, count: 0.02 }` — selection optimizes for sequential depth and initially-blocked pieces. Measured at the tier-3 peak: hardest-of-10 boards average ~12 dependency waves and ~19% initially-free pieces (pool mean 8 / 23%).
 - The wave system **replaces** the old bracket ramp and the every-5th-level breather (`isBreather`/`breatherEvery`/`bracketRange`/`percentileMin`/`percentileMax`/`openBracketSpan` are retired); each wave's first levels are the breathers.
-- At 12×16 the cell size is ~72 canvas px — denser than anything shipped before; verified visually during implementation.
+- At 20×27 the cell size is ~43 canvas px (≈16 px on a phone) — deliberately accepted for maximum-scale boards; verified visually during implementation.
 
 **Long bias** skews target-length sampling toward the top of the range (0 = uniform, 1 = always maxLen). Actual lengths can fall below target when packing constraints cut a walk short; length 1 remains the always-legal fallback that makes perfect packing reliable. Feasibility measured: rectangles and all shapes pack with 0% candidate failure at the tier-3 peak — except the diamond, whose stair-corner geometry breaks down beyond 10×14 (~97% failure at 12×16), so **shapes carry an optional per-shape dimension cap** applied as `min(wave dims, shape cap)`; only the diamond uses it (10×14).
 
