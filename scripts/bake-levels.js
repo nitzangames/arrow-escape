@@ -11,7 +11,12 @@ const out = [];
 for (let lvl = 1; lvl <= N; lvl++) {
   const g = generateLevel(lvl, balance);
   // validate every shipped level — a bad board must never reach a player
-  if (Array.from(g.grid).includes(EMPTY)) throw new Error(`level ${lvl}: holes (uncovered cells)`);
+  for (const p of g.pieces) {
+    for (const ci of p.cells) {
+      if (ci < 0 || ci >= g.cols * g.rows) throw new Error(`level ${lvl}: cell index ${ci} out of range`);
+    }
+  }
+  if (g.grid.includes(EMPTY)) throw new Error(`level ${lvl}: holes (uncovered cells)`);
   if (!simulateWaves(g.pieces, g.grid, g.cols, g.rows).cleared) throw new Error(`level ${lvl}: unsolvable`);
   for (const p of g.pieces) {
     const h = p.cells[0];
