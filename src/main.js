@@ -231,13 +231,16 @@ async function boot() {
       // corrupted save → keep defaults
     }
   }
-  gd.baked = await loadBakedLevels();
   // FIX 1: mark boot complete so pointerdown handler becomes active
   booted = true;
   gd.adsAvailable = window.PlaySDK ? !!PlaySDK.adsAvailable : true; // dev: show ad button
   heartTick(gd, balance, Date.now()); // apply offline regen before first render
 
   refreshRect();
+
+  // Load baked levels off the critical path so the menu paints immediately;
+  // until they arrive, getLevel falls back to generation (gd.baked stays null).
+  loadBakedLevels().then((b) => { gd.baked = b; });
 
   // Screenshot mode: skip menus, show a busy mid-game board, play a few moves.
   if (window.PlaySDK && PlaySDK.screenshotMode) {
