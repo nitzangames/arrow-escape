@@ -122,7 +122,7 @@ UI rules: canvas-drawn UI using the type-ladder steps (canvas-px equivalents per
 
 **Screenshot mode:** when `PlaySDK.screenshotMode` (`?screenshot=1`), skip the menu, load a visually busy mid-game board (~level 40), and auto-play 2–3 escapes on a timer for an appealing capture.
 
-**Feedback & juice (small, calm):** accelerating slide-out where the snake visibly straightens along its track, with a soft whoosh; bump animation ≤250 ms with light screen shake; hint pulse outlining the highlighted piece; subtle confetti-free "LEVEL CLEAR" fade — no aggressive effects, the game stays quiet.
+**Feedback & juice (small, calm):** accelerating slide-out where the snake visibly straightens along its track, with a soft whoosh; bump animation ≤250 ms with light screen shake and the wrongly-tapped piece flashing red (`wrongDur` 0.8 s, fades out); hint pulse outlining the highlighted piece; on level clear, two confetti cannons fire from the bottom corners (closed-form ballistic particles in the theme palette, ~2.6 s, render-layer only) under the "LEVEL CLEAR" fade.
 
 ## 4. Tech architecture
 

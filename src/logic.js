@@ -16,6 +16,7 @@ export function startLevel(gd, balance) {
   gd.maxTravel = new Float32Array(n);
   gd.slideT = new Float32Array(n);
   gd.bumpT = new Float32Array(n);
+  gd.wrongT = new Float32Array(n);
   gd.slidingCount = 0;
   gd.remaining = n;
   gd.flawless = true;
@@ -60,6 +61,7 @@ export function tapCell(gd, balance, c, r) {
     return 'fly';
   }
   gd.bumpT[p] = balance.bumpDur;
+  gd.wrongT[p] = balance.wrongDur; // the wrong arrow shows red while this drains
   gd.hearts--;
   gd.flawless = false;
   gd.shakeT = balance.shakeDur;
@@ -99,6 +101,10 @@ export function tick(gd, balance, dt) {
     }
     if (gd.bumpT[p] > 0) {
       gd.bumpT[p] = Math.max(0, gd.bumpT[p] - dt);
+      animating = true;
+    }
+    if (gd.wrongT[p] > 0) {
+      gd.wrongT[p] = Math.max(0, gd.wrongT[p] - dt);
       animating = true;
     }
   }

@@ -26,6 +26,7 @@ function makeGd(cols, rows, defs) {
   gd.maxTravel = new Float32Array(n);
   gd.slideT = new Float32Array(n);
   gd.bumpT = new Float32Array(n);
+  gd.wrongT = new Float32Array(n);
   gd.remaining = n;
   return gd;
 }
@@ -394,4 +395,16 @@ test('showPopup raises the celebration card and tick counts it down on any scree
   runTicks(gd, balance.popupDur);
   assert.equal(gd.popupT, 0);
   assert.equal(gd.popupText, '', 'card cleared after the countdown');
+});
+
+test('a wrong tap flashes the piece red for wrongDur and fades via tick', () => {
+  const gd = makeGd(2, 1, [
+    { cells: [0], dir: 1 },
+    { cells: [1], dir: 3 },
+  ]);
+  assert.equal(tapCell(gd, balance, 0, 0), 'bump');
+  assert.ok(Math.abs(gd.wrongT[0] - balance.wrongDur) < 1e-6); // Float32 storage
+  assert.equal(gd.wrongT[1], 0, 'only the tapped piece is marked');
+  runTicks(gd, balance.wrongDur + 0.1);
+  assert.equal(gd.wrongT[0], 0, 'red mark fully fades');
 });

@@ -4,7 +4,7 @@ import {
   startLevel, nextLevel, tapCell, tick, useHint, refillHearts,
   heartTick, grantAdHeart, buyGoldPack, openShop, closeShop, showPopup,
 } from './logic.js';
-import { render, hitTest } from './render.js';
+import { render, hitTest, spawnConfetti, confettiActive } from './render.js';
 import { findHint } from './generator.js';
 import { initAudio, sfx, suspendAudio, resumeAudio } from './audio.js';
 
@@ -169,8 +169,10 @@ function frame(t) {
   }
   if (gd.screen === 'clear' && prevScreen !== 'clear') {
     sfx(gd, 'fanfare');
+    spawnConfetti(gd.nowMs);
     saveProgress(gd.level + 1); // clearing banks the NEXT level — no re-farm on reload
   }
+  if (gd.screen === 'clear' && confettiActive(gd.nowMs)) gd.dirty = true;
   prevScreen = gd.screen;
   if (!gd.dirty) return; // static screens render only when something changed
   render(ctx, gd, balance);

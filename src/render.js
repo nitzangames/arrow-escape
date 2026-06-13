@@ -158,6 +158,15 @@ function drawPiece(c, gd, g, p, ox, oy) {
   c.beginPath();
   tracePiecePath(c, gd, g, p, ox, oy);
   c.stroke();
+  // Wrong tap: the whole piece flashes red, fading out over the last 0.3 s.
+  if (gd.wrongT && gd.wrongT[p] > 0) {
+    c.globalAlpha = Math.min(1, gd.wrongT[p] / 0.3);
+    setPieceStroke(c, g, 0.72, THEME.accent);
+    c.beginPath();
+    tracePiecePath(c, gd, g, p, ox, oy);
+    c.stroke();
+    c.globalAlpha = 1;
+  }
   const head = gd.pieces[p].cells[0];
   drawHeadGlyph(c, cellCx(gd, g, head) + ox, cellCy(gd, g, head) + oy, g.cell, gd.pieces[p].dir);
 }
@@ -200,6 +209,66 @@ function drawSlidingPiece(c, gd, g, p) {
   c.stroke();
   segPos(gd, g, p, 0, _pt);
   drawHeadGlyph(c, _pt.x, _pt.y, g.cell, piece.dir); // head rides the straight ray → angle = dir
+}
+
+
+// --- confetti cannons (level clear) ---------------------------------------
+// Two cannons at the bottom corners fire on the clear transition. Particles
+// are closed-form ballistic (position derived from elapsed time), so there is
+// no per-frame physics state — render just needs gd.nowMs and redraws while
+// confettiActive. Visual-only: lives entirely in the render layer.
+const CONFETTI_LIFE = 2600; // ms
+const CONFETTI_COLORS = ['#e2574c', '#2b2b2e', '#8a857a', '#d5cfc2', '#e3a23c'];
+let confetti = [];
+let confettiT0 = 0;
+
+export function spawnConfetti(nowMs) {
+  confettiT0 = nowMs;
+  confetti = [];
+  for (const [x0, side] of [[40, 1], [W - 40, -1]]) {
+    for (let i = 0; i < 110; i++) {
+      const angle = (-Math.PI / 2) + side * (0.12 + Math.random() * 0.5);
+      const speed = 1400 + Math.random() * 1300;
+      confetti.push({
+        x0, y0: H + 20,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        w: 26 + Math.random() * 18,
+        h: 18 + Math.random() * 12,
+        rot: Math.random() * Math.PI,
+        spin: (Math.random() - 0.5) * 10,
+        color: CONFETTI_COLORS[(Math.random() * CONFETTI_COLORS.length) | 0],
+        delay: Math.random() * 180,
+      });
+    }
+  }
+}
+
+export function confettiActive(nowMs) {
+  return confetti.length > 0 && nowMs - confettiT0 < CONFETTI_LIFE;
+}
+
+const CONFETTI_G = 2400; // px/s^2
+function drawConfetti(c, nowMs) {
+  if (!confettiActive(nowMs)) return;
+  const age = nowMs - confettiT0;
+  c.save();
+  c.globalAlpha = Math.min(1, (CONFETTI_LIFE - age) / 500); // fade at the end
+  for (const p of confetti) {
+    const t = (age - p.delay) / 1000;
+    if (t <= 0) continue;
+    const x = p.x0 + p.vx * t;
+    const y = p.y0 + p.vy * t + 0.5 * CONFETTI_G * t * t;
+    if (y > H + 60) continue;
+    c.save();
+    c.translate(x, y);
+    c.rotate(p.rot + p.spin * t);
+    c.scale(1, 0.6 + 0.4 * Math.sin(p.spin * 3 * t)); // tumbling flutter
+    c.fillStyle = p.color;
+    c.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+    c.restore();
+  }
+  c.restore();
 }
 
 function drawHeart(c, x, y, s, color) {
@@ -394,6 +463,7 @@ function renderClear(c, gd) {
   c.globalAlpha = gd.clearFade;
   c.fillStyle = THEME.overlay;
   c.fillRect(0, 0, W, H);
+  drawConfetti(c, gd.nowMs);
   c.fillStyle = THEME.ink;
   c.textAlign = 'center';
   c.font = FONT.display;

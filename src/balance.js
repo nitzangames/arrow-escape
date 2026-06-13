@@ -1,4 +1,4 @@
-export const VERSION = 'v0.1.31';
+export const VERSION = 'v0.1.32';
 
 export const balance = {
   canvasW: 1080,
@@ -49,6 +49,7 @@ export const balance = {
   flyAccel: 50,           // cells/s²
   flyMargin: 3,           // extra cells past the edge before a flight despawns
   bumpDur: 0.25,          // s
+  wrongDur: 0.8,          // s the wrongly-tapped piece stays red (fades out)
   bumpDist: 26,           // px of bump travel at the 150px reference cell size
   shakeDur: 0.3,          // s
   clearDelay: 0.6,        // s between last escape and the clear overlay

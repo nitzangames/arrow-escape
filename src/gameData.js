@@ -17,6 +17,7 @@ export function allocGameData(balance) {
     maxTravel: null, // Float32Array per piece: despawn distance
     slideT: null,    // Float32Array per piece: seconds sliding
     bumpT: null,     // Float32Array per piece: bump animation countdown
+    wrongT: null,    // Float32Array per piece: red wrong-tap flash countdown
     slidingCount: 0,
     remaining: 0,    // pieces not yet tapped free
     hearts: balance.heartCap,
