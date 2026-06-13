@@ -1,4 +1,4 @@
-export const VERSION = 'v0.1.33';
+export const VERSION = 'v0.1.34';
 
 export const balance = {
   canvasW: 1080,
@@ -13,7 +13,7 @@ export const balance = {
   // selection climbs wavePercentileMin -> 1.0 (a wave's last level ships the
   // hardest board of its pool). Tiers raise the ceilings as players progress.
   waveStart: 4,
-  wavePeriod: 8,
+  wavePeriod: 6,
   wavePercentileMin: 0.3,
   minLen: 2,              // target floor past the tutorial — singles are packing fallback only
   // [maxLevel, floorCols, floorRows, floorMaxLen, peakCols, peakRows, peakMaxLen, longBias]
@@ -21,11 +21,9 @@ export const balance = {
   // so tier transitions land exactly on wave peaks (the peak ships, then the
   // next wave starts the new tier at its floor).
   tiers: [
-    [27, 7, 10, 6, 10, 14, 12, 0.5],
-    [59, 8, 11, 7, 12, 16, 14, 0.5],
-    [91, 9, 13, 8, 15, 20, 16, 0.6],
-    [123, 10, 14, 9, 17, 23, 16, 0.6],
-    [Infinity, 10, 14, 10, 20, 27, 16, 0.6],
+    [9, 7, 10, 6, 12, 16, 12, 0.5],
+    [15, 9, 12, 8, 20, 27, 16, 0.6],
+    [Infinity, 11, 15, 10, 20, 27, 16, 0.6],
   ],
   shapeStartLevel: 10,    // first shaped level
   shapeEvery: 3,          // a shaped board every 3rd level from shapeStartLevel
