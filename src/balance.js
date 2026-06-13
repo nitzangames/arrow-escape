@@ -1,4 +1,4 @@
-export const VERSION = 'v0.1.32';
+export const VERSION = 'v0.1.33';
 
 export const balance = {
   canvasW: 1080,
@@ -22,8 +22,10 @@ export const balance = {
   // next wave starts the new tier at its floor).
   tiers: [
     [27, 7, 10, 6, 10, 14, 12, 0.5],
-    [59, 8, 11, 7, 11, 15, 14, 0.5],
-    [Infinity, 8, 12, 8, 12, 16, 16, 0.6],
+    [59, 8, 11, 7, 12, 16, 14, 0.5],
+    [91, 9, 13, 8, 15, 20, 16, 0.6],
+    [123, 10, 14, 9, 17, 23, 16, 0.6],
+    [Infinity, 10, 14, 10, 20, 27, 16, 0.6],
   ],
   shapeStartLevel: 10,    // first shaped level
   shapeEvery: 3,          // a shaped board every 3rd level from shapeStartLevel

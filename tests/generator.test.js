@@ -79,12 +79,14 @@ test('waveFor: tutorial, wave interpolation, tier ceilings', () => {
   assert.equal(next.t, 0);
   assert.deepEqual([next.cols, next.rows, next.maxLen], [7, 10, 6]);
   const t3 = waveFor(67, balance); // tier-3 peak: (67-4)%8 = 7 -> t = 1
-  assert.deepEqual([t3.cols, t3.rows, t3.maxLen, t3.longBias], [12, 16, 16, 0.6]);
+  assert.deepEqual([t3.cols, t3.rows, t3.maxLen, t3.longBias], [15, 20, 16, 0.6]);
+  const t5 = waveFor(131, balance); // tier-5 peak: the new max board
+  assert.deepEqual([t5.cols, t5.rows, t5.maxLen, t5.longBias], [20, 27, 16, 0.6]);
   // tier boundaries land exactly on wave peaks (peak ships, next wave steps up a tier)
   assert.equal(waveFor(27, balance).t, 1);
   assert.deepEqual([waveFor(28, balance).cols, waveFor(28, balance).rows, waveFor(28, balance).maxLen], [8, 11, 7]);
   assert.equal(waveFor(59, balance).t, 1);
-  assert.deepEqual([waveFor(60, balance).cols, waveFor(60, balance).rows, waveFor(60, balance).maxLen], [8, 12, 8]);
+  assert.deepEqual([waveFor(60, balance).cols, waveFor(60, balance).rows, waveFor(60, balance).maxLen], [9, 13, 8]);
 });
 
 test('rayClear sees other pieces but exempts own body', () => {
@@ -198,7 +200,7 @@ test('generateLevel is deterministic, full, and always solvable', () => {
 });
 
 test('generation never wedges across the whole early game', () => {
-  for (let lvl = 1; lvl <= 200; lvl++) {
+  for (let lvl = 1; lvl <= 260; lvl++) {
     const g = generateLevel(lvl, balance);
     assert.ok(!Array.from(g.grid).includes(EMPTY), `level ${lvl} has holes`);
   }
@@ -217,7 +219,9 @@ test('difficulty waves: within-wave rise, wave-start dip, tier growth, gentle tu
   for (const w of [75, 83]) t3 += score(w);
   assert.ok(t3 / 2 > t1 / 2, 'tier-3 rectangle peaks harder than tier-1');
   const p75 = generateLevel(75, balance);
-  assert.deepEqual([p75.cols, p75.rows], [12, 16], 'tier-3 peak rectangle is full size');
+  assert.deepEqual([p75.cols, p75.rows], [15, 20], 'tier-3 peak rectangle is full size');
+  const p131 = generateLevel(131, balance);
+  assert.deepEqual([p131.cols, p131.rows], [20, 27], 'tier-5 peak is the new 20x27 max');
   const tut = Math.max(score(1), score(2), score(3));
   assert.ok(tut < startSum / 3, 'tutorial below tier-1 wave starts');
 });

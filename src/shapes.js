@@ -13,13 +13,17 @@ const heartIn = (x, y) => {
 };
 
 export const SHAPES = {
-  heart:     { inside: heartIn, bbox: [-1.139, 1.139, -1.0, 1.236] },
+  // Heart packs reliably only up to 12x16 (13x17+ wedges near the notch,
+  // measured 97-100% failure; one freak working size at 14x19 isn't worth
+  // relying on). Capped conservatively.
+  heart:     { inside: heartIn, bbox: [-1.139, 1.139, -1.0, 1.236], cap: [12, 16] },
   // 1.3 (not the pointier 1.02): 4-wide tips are the narrowest the tiler can
   // reliably pack — and only up to 10x14: beyond that the stair corners
   // multiply (97% packing failure at 12x16), so the diamond carries a
   // dimension cap that maskFor applies before sampling.
   diamond:   { inside: (x, y) => Math.abs(x) + Math.abs(y) <= 1.3, bbox: [-1, 1, -1, 1], cap: [10, 14] },
-  plus:      { inside: (x, y) => Math.abs(x) <= 0.34 || Math.abs(y) <= 0.34, bbox: [-1, 1, -1, 1] },
+  // Plus fails at 20x27 (70% of candidates); 17x23 measured clean.
+  plus:      { inside: (x, y) => Math.abs(x) <= 0.34 || Math.abs(y) <= 0.34, bbox: [-1, 1, -1, 1], cap: [17, 23] },
   donut:     { inside: (x, y) => !(Math.abs(x) <= 0.45 && Math.abs(y) <= 0.45), bbox: [-1, 1, -1, 1] },
   // Waist floor 0.12 keeps a 2-cell waist on 10-wide boards; the schedule
   // only uses the hourglass at 10x14.
