@@ -25,6 +25,7 @@ export function allocGameData(balance) {
     adUsedThisGate: false,  // one rewarded-ad heart per out-of-hearts gating
     adsAvailable: true,     // set by main at boot from PlaySDK.adsAvailable
     nowMs: 0,               // stamped by main each frame; render-only countdowns
+    baked: null,            // pre-baked levels array (set by main at boot), or null
     shopFrom: 'menu',       // screen to return to when the shop closes
     shopMsg: '',            // quiet inline feedback (purchase cancelled)
     popupText: '',          // celebration card line ("+500"), empty when hidden

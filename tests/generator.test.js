@@ -4,7 +4,7 @@ import { balance } from '../src/balance.js';
 import {
   EMPTY, WALL, DIRS, mulberry32, levelSeed, waveFor, rayClear,
   buildBoard, simulateWaves, scoreBoard,
-  pickIndexForLevel, generateLevel, findHint,
+  pickIndexForLevel, generateLevel, findHint, getLevel,
 } from '../src/generator.js';
 import { maskFor, shapeFor } from '../src/shapes.js';
 
@@ -329,4 +329,27 @@ test('no arrowhead ever points along its own body (zero self-crossing)', () => {
       }
     }
   }
+});
+
+test('getLevel uses baked data when present and falls back to generation otherwise', () => {
+  const baked = [];
+  for (let lvl = 1; lvl <= 3; lvl++) {
+    const g = generateLevel(lvl, balance);
+    baked.push({ c: g.cols, r: g.rows, s: g.shape || null, p: g.pieces.map((pc) => [pc.dir, ...pc.cells]) });
+  }
+  // baked levels: getLevel rehydrates a board identical to generateLevel
+  for (let lvl = 1; lvl <= 3; lvl++) {
+    const g = generateLevel(lvl, balance);
+    const b = getLevel(lvl, balance, baked);
+    assert.equal(b.cols, g.cols);
+    assert.equal(b.rows, g.rows);
+    assert.equal(b.shape, g.shape || null);
+    assert.equal(b.count, g.pieces.length);
+    assert.deepEqual(b.pieces, g.pieces);
+    assert.deepEqual(Array.from(b.grid), Array.from(g.grid));
+  }
+  // beyond the baked range -> generated
+  assert.deepEqual(getLevel(50, balance, baked).pieces, generateLevel(50, balance).pieces);
+  // no baked data -> generated
+  assert.deepEqual(getLevel(2, balance, null).pieces, generateLevel(2, balance).pieces);
 });

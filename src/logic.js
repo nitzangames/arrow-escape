@@ -1,10 +1,10 @@
 // Pure game logic. No DOM — runs under Node for tests.
 // Every function takes (gd, balance, ...) and mutates gd in place.
 
-import { generateLevel, findHint, rayClear, EMPTY } from './generator.js';
+import { getLevel, findHint, rayClear, EMPTY } from './generator.js';
 
 export function startLevel(gd, balance) {
-  const gen = generateLevel(gd.level, balance);
+  const gen = getLevel(gd.level, balance, gd.baked);
   gd.cols = gen.cols;
   gd.rows = gen.rows;
   gd.pieces = gen.pieces;

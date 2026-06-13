@@ -1,4 +1,4 @@
-export const VERSION = 'v0.1.35';
+export const VERSION = 'v0.1.36';
 
 export const balance = {
   canvasW: 1080,
@@ -28,6 +28,7 @@ export const balance = {
   shapeStartLevel: 10,    // first shaped level
   shapeEvery: 3,          // a shaped board every 3rd level from shapeStartLevel
   candidates: 10,         // boards generated per level, picked by wave percentile
+  bakeCount: 3000,        // levels 1..bakeCount are pre-generated at build time
   scoreWeights: { wave: 1.5, blocked: 8.0, count: 0.02 },
 
   heartCap: 5,            // persistent heart pool (carries across levels)

@@ -447,6 +447,22 @@ export function generateLevel(level, balance) {
   };
 }
 
+// Return the board for `level`: a rehydrated baked entry when `baked` has one
+// (boards are a data lookup — no generation), else freshly generated. Baked
+// entries store only pieces; the grid rebuilds by filling WALL and stamping
+// piece cells, which reproduces generateLevel's grid exactly (full boards
+// leave no EMPTY; shaped boards keep WALL outside the silhouette).
+export function getLevel(level, balance, baked) {
+  if (baked && level >= 1 && level <= baked.length) {
+    const e = baked[level - 1];
+    const pieces = e.p.map((a) => ({ dir: a[0], cells: a.slice(1) }));
+    const grid = new Int16Array(e.c * e.r).fill(WALL);
+    pieces.forEach((pc, id) => { for (const ci of pc.cells) grid[ci] = id; });
+    return { cols: e.c, rows: e.r, shape: e.s, pieces, grid, count: pieces.length };
+  }
+  return generateLevel(level, balance);
+}
+
 // Hint: among currently-free pieces (optionally restricted to `alive`), pick
 // the one whose removal frees the most blocked pieces (ties → lowest index).
 // Returns a piece index, or -1. Temporarily toggles grid cells but always
