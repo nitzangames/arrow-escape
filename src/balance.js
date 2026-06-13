@@ -1,4 +1,4 @@
-export const VERSION = 'v0.1.37';
+export const VERSION = 'v0.1.38';
 
 export const balance = {
   canvasW: 1080,

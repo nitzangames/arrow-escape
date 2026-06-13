@@ -27,6 +27,22 @@ function sdkLoad(key) {
   return Promise.resolve(localStorage.getItem(SAVE_PREFIX + key));
 }
 
+// Load + inflate the pre-baked levels (levels.json.gz) using the built-in
+// DecompressionStream. Returns the level array, or null on any failure —
+// the game then falls back to runtime generation (no hard dependency).
+async function loadBakedLevels() {
+  try {
+    if (typeof DecompressionStream !== 'function') return null;
+    const res = await fetch('levels.json.gz');
+    if (!res.ok) return null;
+    const stream = res.body.pipeThrough(new DecompressionStream('gzip'));
+    const data = await new Response(stream).json();
+    return Array.isArray(data) ? data : null;
+  } catch (err) {
+    return null;
+  }
+}
+
 // Rewarded ad. Dev fallback (no PlaySDK): auto-grant so flows are testable.
 // On platform web, showRewardedAd grants without showing an ad (per docs).
 async function sdkRewardedAd() {
@@ -215,6 +231,7 @@ async function boot() {
       // corrupted save → keep defaults
     }
   }
+  gd.baked = await loadBakedLevels();
   // FIX 1: mark boot complete so pointerdown handler becomes active
   booted = true;
   gd.adsAvailable = window.PlaySDK ? !!PlaySDK.adsAvailable : true; // dev: show ad button
