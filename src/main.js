@@ -80,14 +80,35 @@ async function sdkSpendNbucks(amount, itemDescription, itemId, fulfill) {
 const gd = allocGameData(balance);
 
 function saveProgress(levelOverride) {
-  return sdkSave('progress', JSON.stringify({
+  return sdkSave('progress', JSON.stringify(progressSnapshot(levelOverride)));
+}
+
+function progressSnapshot(levelOverride) {
+  return {
     level: levelOverride ?? gd.level,
     gold: gd.gold,
     sound: gd.sound,
     hearts: gd.hearts,
     heartT: gd.heartT,
     fulfilledReceiptIds: [...fulfilledReceiptIds],
-  }));
+  };
+}
+
+function applyProgressSnapshot(s) {
+  if (!s || typeof s !== 'object') return;
+  if (Number.isFinite(s.level) && s.level >= 1) gd.level = Math.floor(s.level);
+  if (Number.isFinite(s.gold) && s.gold >= 0) gd.gold = Math.floor(s.gold);
+  gd.sound = s.sound !== false;
+  if (Number.isFinite(s.hearts) && s.hearts >= 0) {
+    gd.hearts = Math.min(Math.floor(s.hearts), balance.heartCap);
+  }
+  gd.heartT = Number.isFinite(s.heartT) ? s.heartT : null;
+  fulfilledReceiptIds.clear();
+  if (Array.isArray(s.fulfilledReceiptIds)) {
+    for (const receiptId of s.fulfilledReceiptIds) {
+      if (typeof receiptId === 'string') fulfilledReceiptIds.add(receiptId);
+    }
+  }
 }
 
 // --- input ---
@@ -161,6 +182,24 @@ async function onButton(id) {
         pack.id,
         async (result) => {
           const receiptId = typeof result?.receiptId === 'string' ? result.receiptId : null;
+          if (receiptId && typeof window.PlaySDK?.updateSave === 'function') {
+            const saved = await window.PlaySDK.updateSave('progress', (currentBlob) => {
+              let current = progressSnapshot();
+              try { if (currentBlob) current = JSON.parse(currentBlob); } catch {}
+              const receipts = Array.isArray(current.fulfilledReceiptIds)
+                ? current.fulfilledReceiptIds.filter(id => typeof id === 'string')
+                : [];
+              if (receipts.includes(receiptId)) return JSON.stringify(current);
+              return JSON.stringify({
+                ...current,
+                gold: (Number.isFinite(current.gold) ? current.gold : gd.gold) + pack.gold,
+                fulfilledReceiptIds: [...receipts, receiptId],
+              });
+            });
+            applyProgressSnapshot(JSON.parse(saved));
+            gd.dirty = true;
+            return;
+          }
           if (receiptId && fulfilledReceiptIds.has(receiptId)) return;
           const previousGold = gd.gold;
           if (!buyGoldPack(gd, balance, i)) throw new Error('invalid gold pack');
@@ -242,19 +281,7 @@ async function boot() {
   const raw = await sdkLoad('progress');
   if (raw) {
     try {
-      const s = JSON.parse(raw);
-      if (Number.isFinite(s.level) && s.level >= 1) gd.level = Math.floor(s.level);
-      if (Number.isFinite(s.gold) && s.gold >= 0) gd.gold = Math.floor(s.gold);
-      gd.sound = s.sound !== false;
-      if (Number.isFinite(s.hearts) && s.hearts >= 0) {
-        gd.hearts = Math.min(Math.floor(s.hearts), balance.heartCap);
-      }
-      gd.heartT = Number.isFinite(s.heartT) ? s.heartT : null;
-      if (Array.isArray(s.fulfilledReceiptIds)) {
-        for (const receiptId of s.fulfilledReceiptIds) {
-          if (typeof receiptId === 'string') fulfilledReceiptIds.add(receiptId);
-        }
-      }
+      applyProgressSnapshot(JSON.parse(raw));
     } catch (err) {
       // corrupted save → keep defaults
     }
