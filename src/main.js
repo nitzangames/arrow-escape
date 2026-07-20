@@ -13,10 +13,11 @@ const ctx = canvas.getContext('2d');
 
 // --- persistence: PlaySDK on platform, bare localStorage fallback for local dev ---
 const SAVE_PREFIX = 'arrow-escape:';
+const fulfilledReceiptIds = new Set();
 
-function sdkSave(key, value) {
+async function sdkSave(key, value) {
   if (window.PlaySDK) {
-    PlaySDK.save(key, value);
+    await PlaySDK.save(key, value);
     return;
   }
   localStorage.setItem(SAVE_PREFIX + key, value);
@@ -59,27 +60,33 @@ async function sdkRewardedAd() {
 
 // NBucks spend. The method is exactly PlaySDK.nbucks.spend and the promise
 // REJECTS on cancel/insufficient funds — rejection means nothing was charged.
-async function sdkSpendNbucks(amount, itemDescription, itemId) {
+async function sdkSpendNbucks(amount, itemDescription, itemId, fulfill) {
   if (window.PlaySDK && PlaySDK.nbucks && typeof PlaySDK.nbucks.spend === 'function') {
     try {
-      await PlaySDK.nbucks.spend({ amount, itemDescription, itemId });
+      await PlaySDK.nbucks.spend({ amount, itemDescription, itemId, fulfill });
       return true;
     } catch (err) {
       return false;
     }
   }
-  return true; // dev fallback: free
+  try {
+    await fulfill({});
+    return true; // dev fallback: free
+  } catch {
+    return false;
+  }
 }
 
 const gd = allocGameData(balance);
 
 function saveProgress(levelOverride) {
-  sdkSave('progress', JSON.stringify({
+  return sdkSave('progress', JSON.stringify({
     level: levelOverride ?? gd.level,
     gold: gd.gold,
     sound: gd.sound,
     hearts: gd.hearts,
     heartT: gd.heartT,
+    fulfilledReceiptIds: [...fulfilledReceiptIds],
   }));
 }
 
@@ -148,13 +155,29 @@ async function onButton(id) {
       const i = Number(id.slice(4));
       const pack = balance.goldPacks[i];
       busy = true;
-      const ok = await sdkSpendNbucks(pack.nbucks, pack.gold + ' gold', pack.id);
+      const ok = await sdkSpendNbucks(
+        pack.nbucks,
+        pack.gold + ' gold',
+        pack.id,
+        async (result) => {
+          const receiptId = typeof result?.receiptId === 'string' ? result.receiptId : null;
+          if (receiptId && fulfilledReceiptIds.has(receiptId)) return;
+          const previousGold = gd.gold;
+          if (!buyGoldPack(gd, balance, i)) throw new Error('invalid gold pack');
+          if (receiptId) fulfilledReceiptIds.add(receiptId);
+          try {
+            await saveProgress();
+          } catch (error) {
+            gd.gold = previousGold;
+            if (receiptId) fulfilledReceiptIds.delete(receiptId);
+            throw error;
+          }
+        },
+      );
       busy = false;
       if (ok) {
-        buyGoldPack(gd, balance, i);
         showPopup(gd, balance, '+' + pack.gold);
         sfx(gd, 'fanfare');
-        saveProgress();
       } else {
         gd.shopMsg = 'purchase cancelled';
       }
@@ -227,6 +250,11 @@ async function boot() {
         gd.hearts = Math.min(Math.floor(s.hearts), balance.heartCap);
       }
       gd.heartT = Number.isFinite(s.heartT) ? s.heartT : null;
+      if (Array.isArray(s.fulfilledReceiptIds)) {
+        for (const receiptId of s.fulfilledReceiptIds) {
+          if (typeof receiptId === 'string') fulfilledReceiptIds.add(receiptId);
+        }
+      }
     } catch (err) {
       // corrupted save → keep defaults
     }
