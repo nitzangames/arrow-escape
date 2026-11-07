@@ -408,3 +408,28 @@ test('a wrong tap flashes the piece red for wrongDur and fades via tick', () => 
   runTicks(gd, balance.wrongDur + 0.1);
   assert.equal(gd.wrongT[0], 0, 'red mark fully fades');
 });
+
+test('casual (Harmony): hearts refill per attempt, never regen; no gold', () => {
+  const gd = allocGameData(balance);
+  gd.casual = true;
+  gd.level = 1;
+  gd.hearts = 0;
+  startLevel(gd, balance);
+  assert.equal(gd.hearts, balance.heartCap); // each attempt starts full
+  gd.hearts = 2;
+  assert.equal(heartTick(gd, balance, 1e12), false); // no regen timer
+  assert.equal(gd.hearts, 2);
+  assert.equal(gd.heartT, null);
+  const gold = gd.gold;
+  awardClear(gd, balance);
+  assert.equal(gd.gold, gold); // clears pay nothing
+});
+
+test('casual (Harmony): hints are free even with no gold', () => {
+  const gd = makeGd(3, 1, [{ cells: [0, 1, 2], dir: 3 }]);
+  gd.casual = true;
+  gd.gold = 0;
+  assert.equal(useHint(gd, balance), true);
+  assert.equal(gd.hintPiece, 0);
+  assert.equal(gd.gold, 0);
+});

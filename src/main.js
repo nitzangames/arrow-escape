@@ -13,19 +13,27 @@ const ctx = canvas.getContext('2d');
 
 // --- persistence: PlaySDK on platform, bare localStorage fallback for local dev ---
 const SAVE_PREFIX = 'arrow-escape:';
+let savePrefix = SAVE_PREFIX; // re-keyed per Harmony accountId
 const fulfilledReceiptIds = new Set();
+
+// --- Harmony (playharmony.ai) ---
+// Only the Harmony build (build-harmony.sh) loads Harmony's loader, which
+// defines window.PlayHarmony. Everywhere else this section is inert.
+// Harmony has no NBucks and no ads, so the shop and ad buttons are hidden.
+const onHarmony = !!window.PlayHarmony;
+let harmony = null; // SDK handle once attached
 
 async function sdkSave(key, value) {
   if (window.PlaySDK) {
     await PlaySDK.save(key, value);
     return;
   }
-  localStorage.setItem(SAVE_PREFIX + key, value);
+  localStorage.setItem(savePrefix + key, value);
 }
 
 function sdkLoad(key) {
   if (window.PlaySDK) return PlaySDK.load(key);
-  return Promise.resolve(localStorage.getItem(SAVE_PREFIX + key));
+  return Promise.resolve(localStorage.getItem(savePrefix + key));
 }
 
 // Load + inflate the pre-baked levels (levels.json.gz) using the built-in
@@ -47,6 +55,7 @@ async function loadBakedLevels() {
 // Rewarded ad. Dev fallback (no PlaySDK): auto-grant so flows are testable.
 // On platform web, showRewardedAd grants without showing an ad (per docs).
 async function sdkRewardedAd() {
+  if (onHarmony) return false; // no ads on Harmony (button is hidden too)
   if (window.PlaySDK && typeof PlaySDK.showRewardedAd === 'function') {
     try {
       const r = await PlaySDK.showRewardedAd();
@@ -61,6 +70,7 @@ async function sdkRewardedAd() {
 // NBucks spend. The method is exactly PlaySDK.nbucks.spend and the promise
 // REJECTS on cancel/insufficient funds — rejection means nothing was charged.
 async function sdkSpendNbucks(amount, itemDescription, itemId, fulfill) {
+  if (onHarmony) return false; // no NBucks on Harmony (shop is hidden too)
   if (window.PlaySDK && PlaySDK.nbucks && typeof PlaySDK.nbucks.spend === 'function') {
     try {
       await PlaySDK.nbucks.spend({ amount, itemDescription, itemId, fulfill });
@@ -121,6 +131,7 @@ let booted = false;
 
 canvas.addEventListener('pointerdown', (e) => {
   if (!booted) return;
+  if (harmony && harmony.isOpen()) return;
   initAudio();
   const x = (e.clientX - canvasRect.left) * (canvas.width / canvasRect.width);
   const y = (e.clientY - canvasRect.top) * (canvas.height / canvasRect.height);
@@ -153,8 +164,9 @@ async function onButton(id) {
   if (busy) return;
   switch (id) {
     case 'play':
-      if (gd.hearts > 0) startLevel(gd, balance);
+      if (gd.casual || gd.hearts > 0) startLevel(gd, balance);
       break;
+    case 'retry': if (gd.casual) startLevel(gd, balance); break;
     case 'sound': gd.sound = !gd.sound; saveProgress(); break;
     case 'hint': if (useHint(gd, balance)) saveProgress(); break;
     case 'restart': if (gd.remaining > 0 && gd.hearts > 0) startLevel(gd, balance); break;
@@ -263,6 +275,7 @@ function pauseGame() {
   suspendAudio();
 }
 function resumeGame() {
+  if (harmony && harmony.isOpen()) return; // stay paused under the overlay
   cancelAnimationFrame(rafId); // idempotent: SDK may fire onResume twice
   resumeAudio();
   lastT = performance.now();
@@ -271,6 +284,41 @@ function resumeGame() {
 if (window.PlaySDK) {
   if (PlaySDK.onPause) PlaySDK.onPause(pauseGame);
   if (PlaySDK.onResume) PlaySDK.onResume(resumeGame);
+}
+
+// Harmony session → per-player saves keyed on accountId. A player's first
+// sign-in on this browser adopts the current progress; a key that already
+// has a save loads it (and drops back to the menu so the board matches).
+async function applyHarmonySession(session) {
+  const signedIn = session && (session.kind === 'account' || session.kind === 'guest');
+  const prefix = signedIn ? SAVE_PREFIX + session.accountId + ':' : SAVE_PREFIX;
+  if (prefix === savePrefix) return;
+  savePrefix = prefix;
+  const raw = await sdkLoad('progress');
+  if (!raw) { saveProgress(); return; }
+  try {
+    applyProgressSnapshot(JSON.parse(raw));
+  } catch (err) {
+    return; // corrupted save → keep current state
+  }
+  heartTick(gd, balance, Date.now());
+  if (gd.casual) gd.hearts = balance.heartCap;
+  if (gd.screen !== 'menu') gd.screen = 'menu';
+  gd.dirty = true;
+}
+
+function attachHarmony() {
+  // No container → the overlay attaches to the whole document, so the badge
+  // sits in a viewport corner. The 9:16 canvas letterboxes on desktop and on
+  // tall phones, so it lands in the margin instead of on the RESTART button /
+  // gold counter. (The SDK says never to pass document.body.)
+  window.PlayHarmony.attach().then((h) => {
+    harmony = h;
+    h.on('open', pauseGame);
+    h.on('close', resumeGame);
+    h.auth.onSessionChanged(applyHarmonySession);
+    return h.auth.getSession().then(applyHarmonySession);
+  }).catch((e) => console.warn('Harmony is not available', e)); // game plays on without it
 }
 
 // --- boot ---
@@ -288,7 +336,10 @@ async function boot() {
   }
   // FIX 1: mark boot complete so pointerdown handler becomes active
   booted = true;
-  gd.adsAvailable = window.PlaySDK ? !!PlaySDK.adsAvailable : true; // dev: show ad button
+  gd.adsAvailable = window.PlaySDK ? !!PlaySDK.adsAvailable : !onHarmony; // dev: show ad button
+  gd.shopAvailable = !onHarmony;
+  gd.casual = onHarmony; // Harmony has no monetization: no gold, per-level hearts
+  if (gd.casual) gd.hearts = balance.heartCap;
   heartTick(gd, balance, Date.now()); // apply offline regen before first render
 
   refreshRect();
@@ -316,6 +367,9 @@ async function boot() {
   }
 
   rafId = requestAnimationFrame(frame);
+  if (onHarmony) attachHarmony(); // after the save load; never awaited
 }
 
-boot();
+// On Harmony, a sign-in window returning to this page only finishes sign-in;
+// it must not start the game.
+if (!(onHarmony && window.__MANTICORE_AUTH_RETURN__)) boot();

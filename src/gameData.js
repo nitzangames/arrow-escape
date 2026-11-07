@@ -24,6 +24,8 @@ export function allocGameData(balance) {
     heartT: null,           // epoch ms of the next heart regen; null at cap
     adUsedThisGate: false,  // one rewarded-ad heart per out-of-hearts gating
     adsAvailable: true,     // set by main at boot from PlaySDK.adsAvailable
+    shopAvailable: true,    // false on Harmony (no NBucks there)
+    casual: false,          // Harmony: no gold; hearts are per level, running out restarts it
     nowMs: 0,               // stamped by main each frame; render-only countdowns
     baked: null,            // pre-baked levels array (set by main at boot), or null
     shopFrom: 'menu',       // screen to return to when the shop closes

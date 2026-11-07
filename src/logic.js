@@ -28,6 +28,7 @@ export function startLevel(gd, balance) {
   gd.failTimer = 0;
   gd.goldEarnedClear = 0;
   gd.goldEarnedBonus = 0;
+  if (gd.casual) gd.hearts = balance.heartCap; // casual: every attempt starts with full hearts
   gd.screen = 'game';
   gd.dirty = true;
 }
@@ -139,6 +140,7 @@ export function tick(gd, balance, dt) {
 }
 
 export function awardClear(gd, balance) {
+  if (gd.casual) return; // casual: no gold (the clear screen still celebrates flawless)
   gd.goldEarnedClear = balance.goldPerClear;
   gd.goldEarnedBonus = gd.flawless ? balance.flawlessBonus : 0;
   gd.gold += gd.goldEarnedClear + gd.goldEarnedBonus;
@@ -150,7 +152,8 @@ export function nextLevel(gd, balance) {
 }
 
 export function useHint(gd, balance) {
-  if (gd.screen !== 'game' || gd.hintPiece >= 0 || gd.gold < balance.hintCost) return false;
+  const cost = gd.casual ? 0 : balance.hintCost; // casual: hints are free
+  if (gd.screen !== 'game' || gd.hintPiece >= 0 || gd.gold < cost) return false;
   // hintable = alive and not sliding (a sliding piece's grid cells are already
   // EMPTY, so it would look "free" with gain 0 and could win ties)
   let idx = -1;
@@ -160,7 +163,7 @@ export function useHint(gd, balance) {
     idx = findHint(gd.pieces, gd.grid, gd.cols, gd.rows, mask);
   }
   if (idx < 0) return false;
-  gd.gold -= balance.hintCost;
+  gd.gold -= cost;
   gd.hintPiece = idx;
   gd.hintPulse = 0;
   gd.dirty = true;
@@ -194,6 +197,7 @@ function liftGate(gd) {
 // advances in exact hour steps so regen never drifts. If a heart arrives
 // while the out-of-hearts gate is up, the level resumes in place.
 export function heartTick(gd, balance, now) {
+  if (gd.casual) return false; // casual: hearts never regen, startLevel refills them
   let changed = false;
   if (gd.hearts >= balance.heartCap) {
     if (gd.hearts > balance.heartCap) { gd.hearts = balance.heartCap; changed = true; } // corrupted save

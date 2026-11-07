@@ -56,6 +56,7 @@ const BUTTONS = {
     { id: 'refill', x: 560, y: 1180, w: 440, h: 140, label: 'REFILL' },
     { id: 'shop', x: 290, y: 1380, w: 500, h: 100, label: 'GET GOLD' },
     { id: 'menu', x: 290, y: 1520, w: 500, h: 100, label: 'MENU' },
+    { id: 'retry', x: 290, y: 1180, w: 500, h: 140, label: 'TRY AGAIN' }, // casual only
   ],
   shop: [
     { id: 'pack0', x: 90, y: 760, w: 900, h: 170, label: '' },
@@ -67,13 +68,22 @@ const BUTTONS = {
 
 // Buttons that exist right now, given game state. Shared by rendering and
 // hit-testing so a hidden button can never be tapped.
+// Casual (Harmony): no economy buttons; the survivors close up the gaps.
+const CASUAL_KEEP = new Set(['play', 'sound', 'hint', 'restart', 'next', 'retry', 'menu']);
+const CASUAL_MOVE = {
+  sound: { id: 'sound', x: 290, y: 1380, w: 500, h: 100, label: 'SOUND' },
+  menu: { id: 'menu', x: 290, y: 1380, w: 500, h: 100, label: 'MENU' },
+};
 function visibleButtons(gd) {
   const btns = BUTTONS[gd.screen];
   if (!btns) return null;
+  if (gd.casual) return btns.filter((b) => CASUAL_KEEP.has(b.id)).map((b) => CASUAL_MOVE[b.id] || b);
   return btns.filter((b) => {
+    if (b.id === 'retry') return false;
     if (b.id === 'ad') {
       return gd.hearts === 0 && !gd.adUsedThisGate && gd.adsAvailable;
     }
+    if (b.id === 'shop') return gd.shopAvailable;
     if (b.id === 'refill') {
       if (gd.screen === 'menu') return gd.hearts === 0;
       return true; // gate: always offered (disabled state shows if gold short)
@@ -352,15 +362,17 @@ function renderMenu(c, gd, balance) {
   c.font = FONT.heading;
   c.fillText('LEVEL ' + gd.level, W / 2, 980);
 
-  drawHeartRow(c, gd, balance, W / 2, 1040, 48, 76, false);
-  if (gd.hearts < balance.heartCap) {
-    c.fillStyle = THEME.inkSoft;
-    c.font = FONT.body;
-    c.fillText(heartCountdownText(gd), W / 2, 1140);
+  if (!gd.casual) {
+    drawHeartRow(c, gd, balance, W / 2, 1040, 48, 76, false);
+    if (gd.hearts < balance.heartCap) {
+      c.fillStyle = THEME.inkSoft;
+      c.font = FONT.body;
+      c.fillText(heartCountdownText(gd), W / 2, 1140);
+    }
   }
 
   for (const b of visibleButtons(gd)) {
-    if (b.id === 'play') drawButton(c, b, false, gd.hearts === 0);
+    if (b.id === 'play') drawButton(c, b, false, !gd.casual && gd.hearts === 0);
     else if (b.id === 'ad') drawButton(c, b, true, false, 'AD · +1 ♥', FONT.bodyLarge);
     else if (b.id === 'refill') {
       drawButton(c, b, true, gd.gold < balance.refillCost,
@@ -371,9 +383,11 @@ function renderMenu(c, gd, balance) {
     }
   }
 
-  c.fillStyle = THEME.inkSoft;
-  c.font = FONT.body;
-  c.fillText('● ' + gd.gold + ' gold', W / 2, 1810);
+  if (!gd.casual) {
+    c.fillStyle = THEME.inkSoft;
+    c.font = FONT.body;
+    c.fillText('● ' + gd.gold + ' gold', W / 2, 1810);
+  }
   drawVersion(c, true);
 }
 
@@ -389,7 +403,7 @@ function renderGame(c, gd, balance) {
   c.textAlign = 'left';
   c.fillText('LEVEL ' + gd.level, 80, 180);
   c.textAlign = 'right';
-  c.fillText('● ' + gd.gold, W - 80, 180);
+  if (!gd.casual) c.fillText('● ' + gd.gold, W - 80, 180);
   drawHeartRow(c, gd, balance, W / 2, 270, 48, 76, true);
 
   // Board panel hugs the shape: stroking every open cell's rect with a thick
@@ -453,8 +467,9 @@ function renderGame(c, gd, balance) {
   c.restore();
 
   // Bottom buttons (outside the shake transform)
-  const hintDisabled = gd.gold < balance.hintCost || gd.hintPiece >= 0;
-  drawButton(c, BUTTONS.game[0], false, hintDisabled, 'HINT · ' + balance.hintCost, FONT.bodyLarge);
+  const hintCost = gd.casual ? 0 : balance.hintCost;
+  const hintDisabled = gd.gold < hintCost || gd.hintPiece >= 0;
+  drawButton(c, BUTTONS.game[0], false, hintDisabled, gd.casual ? 'HINT' : 'HINT · ' + hintCost, FONT.bodyLarge);
   drawButton(c, BUTTONS.game[1], true, false, 'RESTART', FONT.bodyLarge);
   drawVersion(c, false);
 }
@@ -470,9 +485,13 @@ function renderClear(c, gd) {
   c.fillText('LEVEL CLEAR', W / 2, 800);
   c.fillStyle = THEME.accent;
   c.font = FONT.bodyLarge;
-  c.fillText('+' + gd.goldEarnedClear + ' gold', W / 2, 920);
-  if (gd.goldEarnedBonus > 0) {
-    c.fillText('+' + gd.goldEarnedBonus + ' flawless bonus', W / 2, 990);
+  if (gd.casual) {
+    if (gd.flawless) c.fillText('Flawless!', W / 2, 920);
+  } else {
+    c.fillText('+' + gd.goldEarnedClear + ' gold', W / 2, 920);
+    if (gd.goldEarnedBonus > 0) {
+      c.fillText('+' + gd.goldEarnedBonus + ' flawless bonus', W / 2, 990);
+    }
   }
   drawButton(c, BUTTONS.clear[0], false, false);
   drawVersion(c, true);
@@ -488,11 +507,17 @@ function renderFail(c, gd, balance) {
   c.fillText('OUT OF HEARTS', W / 2, 760);
   drawHeartRow(c, gd, balance, W / 2, 830, 48, 76, false);
   c.fillStyle = THEME.inkSoft;
-  c.font = FONT.bodyLarge;
-  c.fillText(heartCountdownText(gd), W / 2, 990);
-  c.font = FONT.body;
-  c.fillText('● ' + gd.gold + ' gold', W / 2, 1060);
+  if (gd.casual) {
+    c.font = FONT.bodyLarge;
+    c.fillText('Give this level another go', W / 2, 990);
+  } else {
+    c.font = FONT.bodyLarge;
+    c.fillText(heartCountdownText(gd), W / 2, 990);
+    c.font = FONT.body;
+    c.fillText('● ' + gd.gold + ' gold', W / 2, 1060);
+  }
   for (const b of visibleButtons(gd)) {
+    if (b.id === 'retry') drawButton(c, b, false, false, 'TRY AGAIN');
     if (b.id === 'ad') drawButton(c, b, false, false, 'AD · +1 ♥', FONT.bodyLarge);
     else if (b.id === 'refill') {
       drawButton(c, b, false, gd.gold < balance.refillCost,
